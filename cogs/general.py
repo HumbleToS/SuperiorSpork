@@ -9,13 +9,16 @@ class General(commands.Cog):
         self.bot = bot
 
     @commands.Cog.listener(name="on_message")
-    async def mention_responder(self, message):
-        if re.fullmatch(rf"<@!?{self.bot.user.id}>", message.content):  # type: ignore
-            em = discord.Embed(
-                description=f'Hello! My prefix is `,`',
+    async def mention_responder(self, message: discord.Message):
+        guild = message.guild
+        if not guild:
+            return
+        if re.fullmatch(rf"<@!?{guild.me.id}>", message.content):
+            embed = discord.Embed(
+                description=f"Hello! My prefix is `,`",
                 color=discord.Color.random(),
             )
-            return await message.reply(embed=em)
+            return await message.reply(embed=embed)
         return
 
 
