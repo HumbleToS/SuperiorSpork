@@ -7,6 +7,7 @@ import pathlib
 import sys
 
 import discord
+from discord import Activity, ActivityType, Status
 from discord.ext import commands
 
 CONFIG_FILENAME = "config.json"
@@ -59,6 +60,8 @@ class Spork(commands.Bot):
                 reactions=True,
                 voice_states=True,
             ),
+            status=Status.dnd,
+            activity=Activity(type=ActivityType.watching, name="my bad code | ,help"),
             case_insensitive=True,
         )
 
