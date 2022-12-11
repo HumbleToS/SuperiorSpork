@@ -48,16 +48,34 @@ class Spork(commands.Bot):
     def __init__(self) -> None:
         super().__init__(
             command_prefix=",",
-            intents=discord.Intents(),
+            intents=discord.Intents(
+                emojis=True,
+                guilds=True,
+                invites=True,
+                members=True,
+                message_content=True,
+                messages=True,
+                presences=True,
+                reactions=True,
+                voice_states=True,
+            ),
             case_insensitive=True,
         )
 
-    async def setup_hook(self):
+    async def setup_hook(self) -> None:
+        for file in sorted(pathlib.Path("cogs").glob("**/[!_]*.py")):  # Ignore files starting with an underscore
+            ext = ".".join(file.parts).removesuffix(".py")
+            try:
+                await self.load_extension(ext)
+                _logger.info("Extension: %s loaded successfully", ext)
+            except Exception as error:
+                _logger.exception("Extension: %s failed to load\n%s", ext, error)
+
         os.environ["JISHAKU_NO_UNDERSCORE"] = "True"
         os.environ["JISHAKU_NO_DM_TRACEBACK"] = "True"
 
         await self.load_extension("jishaku")
-        _logger.info("Extension: Loaded jishaku")
+        _logger.info("Extension: jishaku loaded successfully")
 
     async def on_message_edit(self, before, after):
         await self.process_commands(after)
