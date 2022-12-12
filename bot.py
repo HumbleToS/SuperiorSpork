@@ -67,7 +67,8 @@ class Spork(commands.Bot):
         self.start_time = discord.utils.utcnow()
 
     async def setup_hook(self) -> None:
-        for file in sorted(pathlib.Path("cogs").glob("**/[!_]*.py")):  # Ignore files starting with an underscore
+        # Loading Extensions Credit: Umbra
+        for file in sorted(pathlib.Path("cogs").glob("**/[!_]*.py")):
             ext = ".".join(file.parts).removesuffix(".py")
             try:
                 await self.load_extension(ext)
