@@ -48,7 +48,7 @@ _logger = logging.getLogger(__name__)
 class Spork(commands.Bot):
     def __init__(self) -> None:
         super().__init__(
-            command_prefix=",",
+            command_prefix=",,",
             intents=discord.Intents(
                 emojis=True,
                 guilds=True,
@@ -64,6 +64,7 @@ class Spork(commands.Bot):
             activity=Activity(type=ActivityType.watching, name="my bad code | ,help"),
             case_insensitive=True,
         )
+        self.start_time = discord.utils.utcnow()
 
     async def setup_hook(self) -> None:
         for file in sorted(pathlib.Path("cogs").glob("**/[!_]*.py")):  # Ignore files starting with an underscore
