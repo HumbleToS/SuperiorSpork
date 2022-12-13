@@ -5,7 +5,6 @@ import time
 import discord
 import psutil
 from discord.ext import commands
-from discord.ext.commands import Context
 
 from bot import Spork
 from utils.embeds import SporkEmbed
@@ -29,7 +28,7 @@ class General(commands.Cog):
         return
 
     @commands.command()
-    async def about(self, ctx: Context):
+    async def about(self, ctx: commands.Context):
         before_check = time.monotonic()
         await ctx.channel.typing()
         after_check = time.monotonic()
