@@ -33,10 +33,7 @@ rfh = logging.handlers.RotatingFileHandler("logs/superior-spork.log", maxBytes=m
 rfh.setLevel(logging.DEBUG)
 rfh.setFormatter(log_fmt)
 
-if config.get("testing"):
-    HANDLER = sh
-else:
-    HANDLER = rfh
+HANDLER = sh if config.get("testing") else rfh
 
 root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
@@ -82,7 +79,7 @@ class Spork(commands.Bot):
         await self.load_extension("jishaku")
         _logger.info("Extension: jishaku loaded successfully")
 
-    async def on_message_edit(self, before, after):
+    async def on_message_edit(self, before: discord.Message, after: discord.Message) -> None:
         await self.process_commands(after)
 
 
