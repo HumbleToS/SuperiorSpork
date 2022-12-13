@@ -1,13 +1,13 @@
 import random
 
-from discord import Colour, Embed
+import discord
 
 
 def pastel_color():
-    return Colour.from_hsv(random.random(), 0.28, 0.97)
+    return discord.Colour.from_hsv(random.random(), 0.28, 0.97)
 
 
-class SporkEmbed(Embed):
+class SporkEmbed(discord.Embed):
     def __init__(self, **kwargs):
         if kwargs.get('color', None) is None:
             kwargs['color'] = pastel_color()
