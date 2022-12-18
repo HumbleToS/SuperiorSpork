@@ -2,10 +2,14 @@ from discord.ext import commands
 
 
 class NotGuildOwner(commands.CheckFailure):
+    """Raised if the guild owner did not run the command"""
+
     pass
 
 
 def is_guild_owner():
+    """Checks if the guild owner ran the command."""
+
     async def guild_owner(ctx):
         if ctx.guild is not None and ctx.author == ctx.guild.owner:
             return True
