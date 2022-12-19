@@ -52,6 +52,7 @@ class General(commands.Cog):
                     inline=False,
                 )
 
+        embed.set_thumbnail(url=user.display_avatar.url)
         embed.set_author(name=user, icon_url=user.display_avatar.url)
         embed.add_field(name='Joined', value=format_date(getattr(user, 'joined_at', None)), inline=False)
         embed.add_field(name='Registered', value=format_date(ctx.author.created_at), inline=False)
