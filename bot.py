@@ -19,25 +19,28 @@ with open(config_path) as fp:
 
 # Logging Credit: Fretgfr
 
-log_fmt = logging.Formatter(
-    fmt="%(asctime)s - %(name)s:%(lineno)d - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 
-sh = logging.StreamHandler(sys.stdout)
-sh.setLevel(logging.DEBUG)
-sh.setFormatter(log_fmt)
+def setup_logging():
+    log_fmt = logging.Formatter(
+        fmt="%(asctime)s - %(name)s:%(lineno)d - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
-max_bytes = 4 * 1024 * 1024  # 4 MB
-rfh = logging.handlers.RotatingFileHandler("logs/superior-spork.log", maxBytes=max_bytes, backupCount=10)
-rfh.setLevel(logging.DEBUG)
-rfh.setFormatter(log_fmt)
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setLevel(logging.DEBUG)
+    sh.setFormatter(log_fmt)
 
-HANDLER = sh if config.get("testing") else rfh
+    max_bytes = 4 * 1024 * 1024  # 4 MB
+    rfh = logging.handlers.RotatingFileHandler("logs/superior-spork.log", maxBytes=max_bytes, backupCount=10)
+    rfh.setLevel(logging.DEBUG)
+    rfh.setFormatter(log_fmt)
 
-root_logger = logging.getLogger()
-root_logger.setLevel(logging.INFO)
-root_logger.addHandler(HANDLER)
+    HANDLER = sh if config.get("testing") else rfh
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(HANDLER)
+
 
 _logger = logging.getLogger(__name__)
 
@@ -84,6 +87,7 @@ class Spork(commands.Bot):
 
 
 async def main():
+    setup_logging()
     bot = Spork()
     await bot.start(config.get("token"), reconnect=True)
 
