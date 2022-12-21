@@ -38,7 +38,7 @@ class General(commands.Cog):
         """Show info about a user"""
         user = user or ctx.author
         embed = SporkEmbed()
-        # Credit Roles and format_date: RoboDanny
+        # Roles and format_date credit: https://github.com/Rapptz/RoboDanny
         roles = [role.name.replace('@', '@\u200b') for role in getattr(user, 'roles', [])]
 
         def format_date(datetime: Optional[datetime.datetime]):

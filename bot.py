@@ -17,10 +17,10 @@ config_path = current_working_dir / CONFIG_FILENAME
 with open(config_path) as fp:
     config = json.load(fp)
 
-# Logging Credit: Fretgfr
-
 
 def setup_logging():
+    # Logging credit: Fretgfr
+
     log_fmt = logging.Formatter(
         fmt="%(asctime)s - %(name)s:%(lineno)d - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
@@ -67,7 +67,7 @@ class Spork(commands.Bot):
         self.start_time = discord.utils.utcnow()
 
     async def setup_hook(self) -> None:
-        # Loading Extensions Credit: Umbra
+        # Loading Extensions credit: https://github.com/AbstractUmbra/
         for file in sorted(pathlib.Path("cogs").glob("**/[!_]*.py")):
             ext = ".".join(file.parts).removesuffix(".py")
             try:
