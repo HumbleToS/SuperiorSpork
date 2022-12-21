@@ -1,15 +1,19 @@
+from __future__ import annotations
+
 import datetime
 import os
 import re
 import time
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 import discord
 import psutil
 from discord.ext import commands
 
-from bot import Spork
 from utils.embeds import SporkEmbed
+
+if TYPE_CHECKING:
+    from bot import Spork
 
 
 class General(commands.Cog):
