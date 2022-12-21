@@ -1,13 +1,19 @@
+from __future__ import annotations
+
 import asyncio
+from typing import TYPE_CHECKING
 
 import discord
 from discord.ext import commands
 
 from utils import checks
 
+if TYPE_CHECKING:
+    from bot import Spork
+
 
 class Moderation(commands.Cog):
-    def __init__(self, bot: commands.Bot) -> None:
+    def __init__(self, bot: Spork) -> None:
         self.bot = bot
 
     @commands.hybrid_command()
@@ -41,5 +47,5 @@ class Moderation(commands.Cog):
             return await ctx.send("Task cancelled.")
 
 
-async def setup(bot: commands.Bot):
+async def setup(bot: Spork):
     await bot.add_cog(Moderation(bot))
