@@ -74,9 +74,9 @@ class General(commands.Cog):
     @commands.hybrid_command()
     async def about(self, ctx: commands.Context):
         """Shows info about the bot"""
-        before_check = time.monotonic()
+        before_check = time.perf_counter()
         await ctx.channel.typing()
-        after_check = time.monotonic()
+        after_check = time.perf_counter()
         api_latency = (after_check - before_check) * 1000
         seconds_running = (discord.utils.utcnow() - self.bot.start_time).seconds
         embed = SporkEmbed(
