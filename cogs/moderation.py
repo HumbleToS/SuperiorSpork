@@ -7,6 +7,7 @@ import discord
 from discord.ext import commands
 
 from .utils import checks
+from .utils.context import GuildContext
 
 if TYPE_CHECKING:
     from bot import Spork
@@ -20,11 +21,10 @@ class Moderation(commands.Cog):
     @commands.has_permissions(manage_channels=True)
     @commands.guild_only()
     @checks.is_guild_owner()
-    async def clear(self, ctx: commands.Context):
+    async def clear(self, ctx: GuildContext):
         """Deletes and recreates a channel"""
 
         def clear_check(m: discord.Message):
-            assert ctx.guild is not None
             return m.author.id == ctx.guild.owner_id and m.channel.id == ctx.channel.id
 
         if not isinstance(ctx.channel, discord.TextChannel):
