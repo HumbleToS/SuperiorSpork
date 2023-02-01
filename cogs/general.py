@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Optional, Union
 import discord
 import psutil
 from discord.ext import commands
+from discord.ext.commands import Context
 
 from utils.embeds import SporkEmbed
 
@@ -34,7 +35,8 @@ class General(commands.Cog):
         return
 
     @commands.hybrid_command()
-    async def whois(self, ctx: commands.Context, *, user: Union[discord.Member, discord.User] = None):  # type: ignore
+    @commands.guild_only()
+    async def whois(self, ctx: Context, *, user: Optional[Union[discord.Member, discord.User]] = None):
         """Show info about a user"""
         user = user or ctx.author
         embed = SporkEmbed()
@@ -72,7 +74,7 @@ class General(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.hybrid_command()
-    async def about(self, ctx: commands.Context):
+    async def about(self, ctx: Context):
         """Shows info about the bot"""
         before_check = time.perf_counter()
         await ctx.channel.typing()
