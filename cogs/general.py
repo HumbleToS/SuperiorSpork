@@ -11,6 +11,7 @@ import psutil
 from discord.ext import commands
 from discord.ext.commands import Context
 
+from .utils.context import GuildContext
 from .utils.embeds import SporkEmbed
 
 if TYPE_CHECKING:
@@ -36,7 +37,7 @@ class General(commands.Cog):
 
     @commands.hybrid_command()
     @commands.guild_only()
-    async def whois(self, ctx: Context, *, user: Optional[Union[discord.Member, discord.User]] = None):
+    async def whois(self, ctx: GuildContext, *, user: Optional[Union[discord.Member, discord.User]] = None):
         """Show info about a user"""
         user = user or ctx.author
         embed = SporkEmbed()
