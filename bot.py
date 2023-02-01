@@ -68,7 +68,7 @@ class Spork(commands.Bot):
 
     async def setup_hook(self) -> None:
         # Loading Extensions credit: https://github.com/AbstractUmbra/
-        for file in sorted(pathlib.Path("cogs").glob("**/[!_]*.py")):
+        for file in sorted(pathlib.Path("exts").glob("**/[!_]*.py")):
             if (file.is_dir() and file.name.startswith("util")) or (
                 file.parent.is_dir() and file.parent.name.startswith("util")
             ):
