@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from utils.checks import NotGuildOwner
+from .utils.checks import NotGuildOwner
 
 _logger = logging.getLogger(__name__)
 

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import discord
 from discord.ext import commands
 
-from utils import checks
+from .utils import checks
 
 if TYPE_CHECKING:
     from bot import Spork
