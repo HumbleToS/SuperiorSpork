@@ -11,7 +11,7 @@ import psutil
 from discord.ext import commands
 from discord.ext.commands import Context
 
-from utils.embeds import SporkEmbed
+from .utils.embeds import SporkEmbed
 
 if TYPE_CHECKING:
     from bot import Spork
