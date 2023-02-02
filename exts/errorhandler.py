@@ -16,12 +16,13 @@ class ErorrHandler(commands.Cog):
         self.bot = bot
 
     def cog_load(self):
+        self._original_handler = self.bot.tree.on_error
         tree = self.bot.tree
         tree.on_error = self.on_app_command_error
 
     def cog_unload(self):
         tree = self.bot.tree
-        tree.on_error = tree.__class__.on_error  # type: ignore
+        tree.on_error = self._original_handler
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
 
