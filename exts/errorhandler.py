@@ -7,6 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from .utils.checks import NotGuildOwner
+from .utils.wording import plural
 
 _logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ class ErorrHandler(commands.Cog):
         if isinstance(error, app_commands.CommandOnCooldown):
             current_cooldown = math.floor(error.retry_after * 100) / 100
             return await interaction.response.send_message(
-                f"This command is on cooldown for another {current_cooldown} second{'s' * (current_cooldown != 1)}!"
+                f"This command is on cooldown for another {current_cooldown} {plural('second', current_cooldown)}!"
             )
         else:
             trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))
@@ -51,7 +52,7 @@ class ErorrHandler(commands.Cog):
         if isinstance(error, commands.CommandOnCooldown):
             current_cooldown = math.floor(error.retry_after * 100) / 100
             return await ctx.send(
-                f"You can do `{command_used}` again in {current_cooldown} second{'s' * (current_cooldown != 1)}"
+                f"You can do `{command_used}` again in {current_cooldown} {plural('second', current_cooldown)}"
             )
         elif isinstance(error, commands.TooManyArguments):
             return await ctx.send(f"The command `{command_used}` was used with too many arguments")
