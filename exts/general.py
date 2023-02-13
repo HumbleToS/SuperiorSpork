@@ -11,8 +11,11 @@ import psutil
 from discord.ext import commands
 from discord.ext.commands import Context
 
+from .utils import time as timeutil
 from .utils.context import GuildContext
 from .utils.embeds import SporkEmbed
+from .utils.emojis import Status
+from .utils.wording import plural
 
 if TYPE_CHECKING:
     from bot import Spork
@@ -51,11 +54,11 @@ class General(commands.Cog):
 
         if isinstance(user, discord.Member):
             spotify = discord.utils.find(lambda activities: isinstance(activities, discord.Spotify), user.activities)
-            if spotify:
-                artists = ', '.join(spotify.artists)  # type: ignore
+            if isinstance(spotify, discord.Spotify):
+                artists = ', '.join(spotify.artists)
                 embed.add_field(
                     name='Spotify',
-                    value=f'Listening to [**{spotify.title}** by **{artists}**]({spotify.track_url}) on **{spotify.album}**',  # type: ignore
+                    value=f'Listening to [**{spotify.title}** by **{artists}**]({spotify.track_url}) on **{spotify.album}**',
                     inline=False,
                 )
 
@@ -72,6 +75,78 @@ class General(commands.Cog):
             value=f'You are in `{len(user.mutual_guilds):,}` servers with the bot!',
         )
         embed.set_footer(text=f"User ID: {user.id} | Date: {ctx.message.created_at.strftime('%m/%d/%Y')}")
+        await ctx.send(embed=embed)
+
+    @commands.hybrid_command()
+    @commands.guild_only()
+    async def serverinfo(self, ctx: GuildContext):
+        guild = ctx.guild
+        guild_age = timeutil.how_old(discord.utils.utcnow() - guild.created_at)
+        bots = sum(member.bot for member in guild.members)
+
+        # Last boost, status info, role count inspired by:
+        # https://github.com/DuckBot-Discord/DuckBot
+        last_boost = max(guild.members, key=lambda m: m.premium_since or guild.created_at)
+        if last_boost.premium_since is not None:
+            boost = f"\n{last_boost}" f"\n╰ {discord.utils.format_dt(last_boost.premium_since, style='R')}"
+        else:
+            boost = "No active boosters"
+
+        embed = SporkEmbed(
+            title=guild.name,
+            description=f"__{len(guild.members):,}__ {plural('member', guild.members)} are in this server!",
+        )
+        embed.add_field(
+            name="Info",
+            value=f"**Owner:** {guild.owner}"
+            f"\n**Role Count:** {len(guild.roles):,}"
+            f"\n**File Size limit:** {guild.filesize_limit // 1048576:,}",
+            inline=True,
+        )
+        embed.add_field(
+            name="Boosts",
+            value=f"**Level:** {guild.premium_tier} | {guild.premium_subscription_count:,} {plural('Boost', guild.premium_subscription_count)}"
+            f"\n**Booster Count:** {len(guild.premium_subscribers):,}"
+            f"\n**Last Booster:** {boost}",
+            inline=True,
+        )
+
+        graphics_value = ''
+        if guild.premium_tier:
+            if guild.premium_tier > 1:
+                graphics_value += f"\n**Icon:** {f'[click here]({guild.icon.url})' if guild.icon is not None else ''}"
+            if guild.premium_tier > 2:
+                graphics_value += f"\n**Splash:** {f'[click here]({guild.splash.url})' if guild.splash is not None else ''}"
+            if guild.premium_tier >= 3:
+                graphics_value += f"\n**Banner:** {f'[click here]({guild.banner.url})' if guild.banner is not None else ''}"
+        else:
+            graphics_value += (
+                "This guild has no graphics." if guild.icon is None else f"**Icon:** [click here]({guild.icon})"
+            )
+
+        embed.add_field(name="Graphics", value=graphics_value, inline=True)
+        embed.add_field(
+            name="Members",
+            value=f"Total: {len([m for m in guild.members if not m.bot]):,} {plural('member', guild.members)} ({bots:,} {plural('bot', bots)})"
+            f"\nMember Limit: {guild.max_members:,}",
+            inline=True,
+        )
+
+        online_count = sum(m.status is discord.Status.online for m in guild.members)
+        idle_count = sum(m.status is discord.Status.idle for m in guild.members)
+        dnd_count = sum(m.status is discord.Status.dnd for m in guild.members)
+        offline_count = sum(m.status is discord.Status.offline for m in guild.members)
+
+        embed.add_field(
+            name="Status Counts",
+            value=f"{Status.online.value} Online: {online_count:,}"
+            f"\n{Status.idle.value} Idle: {idle_count:,}"
+            f"\n{Status.dnd.value} DND: {dnd_count:,}"
+            f"\n{Status.offline.value} Offline: {offline_count:,}",
+            inline=True,
+        )
+        embed.set_thumbnail(url=guild.icon)
+        embed.set_footer(text=f"The server is {guild_age} • Guild ID: {guild.id}")
         await ctx.send(embed=embed)
 
     @commands.hybrid_command()
@@ -102,7 +177,7 @@ class General(commands.Cog):
         )
         embed.add_field(
             name="Latencies",
-            value=f"Latency: `{round(self.bot.latency * 1000)}ms`\nAPI Latency: `{int(api_latency)}ms`",
+            value=f"Latency: `{round(self.bot.latency * 1000):,}ms`\nAPI Latency: `{int(api_latency):,}ms`",
             inline=False,
         )
         embed.set_footer(text=f"Made in discord.py {discord.__version__}")
