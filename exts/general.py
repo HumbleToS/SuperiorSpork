@@ -15,6 +15,7 @@ from .utils import time as timeutil
 from .utils.context import GuildContext
 from .utils.embeds import SporkEmbed
 from .utils.emojis import Status
+from .utils.guilds import GuildGraphics
 from .utils.wording import plural
 
 if TYPE_CHECKING:
@@ -80,6 +81,7 @@ class General(commands.Cog):
     @commands.hybrid_command()
     @commands.guild_only()
     async def serverinfo(self, ctx: GuildContext):
+        """Show general info about the server"""
         guild = ctx.guild
         guild_age = timeutil.how_old(discord.utils.utcnow() - guild.created_at)
         bots = sum(member.bot for member in guild.members)
@@ -111,24 +113,11 @@ class General(commands.Cog):
             inline=True,
         )
 
-        graphics_value = ''
-        if guild.premium_tier:
-            if guild.premium_tier > 1:
-                graphics_value += f"\n**Icon:** {f'[click here]({guild.icon.url})' if guild.icon is not None else ''}"
-            if guild.premium_tier > 2:
-                graphics_value += f"\n**Splash:** {f'[click here]({guild.splash.url})' if guild.splash is not None else ''}"
-            if guild.premium_tier >= 3:
-                graphics_value += f"\n**Banner:** {f'[click here]({guild.banner.url})' if guild.banner is not None else ''}"
-        else:
-            graphics_value += (
-                "This guild has no graphics." if guild.icon is None else f"**Icon:** [click here]({guild.icon})"
-            )
-
-        embed.add_field(name="Graphics", value=graphics_value, inline=True)
+        embed.add_field(name="Graphics", value=GuildGraphics.from_guild(guild), inline=True)
         embed.add_field(
             name="Members",
-            value=f"Total: {len([m for m in guild.members if not m.bot]):,} {plural('member', guild.members)} ({bots:,} {plural('bot', bots)})"
-            f"\nMember Limit: {guild.max_members:,}",
+            value=f"**Total:** {len([m for m in guild.members if not m.bot]):,} {plural('member', guild.members)} ({bots:,} {plural('bot', bots)})"
+            f"\n**Member Limit:** {guild.max_members:,}",
             inline=True,
         )
 
