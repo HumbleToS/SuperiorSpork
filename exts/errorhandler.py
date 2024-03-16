@@ -16,16 +16,16 @@ class ErorrHandler(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    def cog_load(self):
+    def cog_load(self) -> None:
         self._original_handler = self.bot.tree.on_error
         tree = self.bot.tree
         tree.on_error = self.on_app_command_error
 
-    def cog_unload(self):
+    def cog_unload(self) -> None:
         tree = self.bot.tree
         tree.on_error = self._original_handler
 
-    async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+    async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
 
         if isinstance(error, app_commands.CommandOnCooldown):
             current_cooldown = math.floor(error.retry_after * 100) / 100
@@ -34,10 +34,10 @@ class ErorrHandler(commands.Cog):
             )
         else:
             trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))
-            _logger.exception("Ignoring exception in command %s:\n %s" % (interaction.command, trace))
+            _logger.exception(f"Ignoring exception in command {interaction.command}:\n {trace}")
 
     @commands.Cog.listener()
-    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
+    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> None | discord.Message:
 
         if hasattr(ctx.command, "on_error"):
             return
@@ -64,8 +64,8 @@ class ErorrHandler(commands.Cog):
             return await ctx.send(f'The command `{command_used}` can only be used by the server owner.')
         else:
             trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))
-            _logger.exception("Ignoring exception in command %s:\n %s" % (ctx.command, trace))
+            _logger.exception(f"Ignoring exception in command {ctx.command}:\n {trace}")
 
 
-async def setup(bot: commands.Bot):
+async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(ErorrHandler(bot))

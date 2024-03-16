@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import datetime
 import os
 import re
 import time
@@ -9,17 +8,21 @@ from typing import TYPE_CHECKING, Optional, Union
 import discord
 import psutil
 from discord.ext import commands
-from discord.ext.commands import Context
 
 from .utils import time as timeutil
-from .utils.context import GuildContext
 from .utils.embeds import SporkEmbed
 from .utils.emojis import Status
 from .utils.guilds import GuildGraphics
 from .utils.wording import plural
 
 if TYPE_CHECKING:
+    import datetime
+
+    from discord.ext.commands import Context
+
     from bot import Spork
+
+    from .utils.context import GuildContext
 
 
 class General(commands.Cog):
@@ -28,27 +31,27 @@ class General(commands.Cog):
         self._current_process = psutil.Process(os.getpid())
 
     @commands.Cog.listener(name="on_message")
-    async def mention_responder(self, message: discord.Message):
+    async def mention_responder(self, message: discord.Message) -> None | discord.Message:
         guild = message.guild
         if not guild:
             return
         if re.fullmatch(rf"<@!?{guild.me.id}>", message.content):
             embed = SporkEmbed(
-                description=f"Hello! My prefix is `,,`",
+                description="Hello! My prefix is `,,`",
             )
             return await message.reply(embed=embed)
         return
 
     @commands.hybrid_command()
     @commands.guild_only()
-    async def whois(self, ctx: GuildContext, *, user: Optional[Union[discord.Member, discord.User]] = None):
+    async def whois(self, ctx: GuildContext, *, user: discord.Member | discord.User | None = None) -> None:
         """Show info about a user"""
         user = user or ctx.author
         embed = SporkEmbed()
         # Roles and format_date credit: https://github.com/Rapptz/RoboDanny
         roles = [role.name.replace('@', '@\u200b') for role in getattr(user, 'roles', [])]
 
-        def format_date(datetime: Optional[datetime.datetime]):
+        def format_date(datetime: datetime.datetime | None) -> str:
             if datetime is None:
                 return 'N/A'
             return f"{discord.utils.format_dt(datetime)} ({discord.utils.format_dt(datetime, style='R')})"
@@ -80,7 +83,7 @@ class General(commands.Cog):
 
     @commands.hybrid_command()
     @commands.guild_only()
-    async def serverinfo(self, ctx: GuildContext):
+    async def serverinfo(self, ctx: GuildContext) -> None:
         """Show general info about the server"""
         guild = ctx.guild
         guild_age = timeutil.how_old(discord.utils.utcnow() - guild.created_at)
@@ -139,7 +142,7 @@ class General(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.hybrid_command()
-    async def about(self, ctx: Context):
+    async def about(self, ctx: Context) -> None:
         """Shows info about the bot"""
         before_check = time.perf_counter()
         await ctx.channel.typing()
@@ -173,5 +176,5 @@ class General(commands.Cog):
         await ctx.send(embed=embed)
 
 
-async def setup(bot: Spork):
+async def setup(bot: Spork) -> None:
     await bot.add_cog(General(bot))
