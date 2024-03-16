@@ -14,11 +14,11 @@ CONFIG_FILENAME = "config.json"
 current_working_dir = pathlib.Path(__file__).parent
 config_path = current_working_dir / CONFIG_FILENAME
 
-with open(config_path) as fp:
+with pathlib.Path.open(config_path) as fp:
     config = json.load(fp)
 
 
-def setup_logging():
+def setup_logging() -> None:
     # Logging credit: Fretgfr
 
     log_fmt = logging.Formatter(
@@ -91,7 +91,7 @@ class Spork(commands.Bot):
         await self.process_commands(after)
 
 
-async def main():
+async def main() -> None:
     setup_logging()
     bot = Spork()
     await bot.start(config.get("token"), reconnect=True)
