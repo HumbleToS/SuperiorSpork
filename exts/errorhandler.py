@@ -60,6 +60,8 @@ class ErorrHandler(commands.Cog):
             return await ctx.send(f"The command `{command_used}` was used incorrectly")
         elif isinstance(error, commands.MissingRequiredArgument):
             return await ctx.send(f"You're missing the required argument `{error.param.name}`")
+        elif isinstance(error, commands.CheckFailure):
+            return _logger.info(error)
         elif isinstance(error, NotGuildOwner):
             return await ctx.send(f'The command `{command_used}` can only be used by the server owner.')
         else:
