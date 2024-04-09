@@ -49,34 +49,34 @@ class General(commands.Cog):
         user = user or ctx.author
         embed = SporkEmbed()
         # Roles and format_date credit: https://github.com/Rapptz/RoboDanny
-        roles = [role.name.replace('@', '@\u200b') for role in getattr(user, 'roles', [])]
+        roles = [role.name.replace("@", "@\u200b") for role in getattr(user, "roles", [])]
 
         def format_date(datetime: datetime.datetime | None) -> str:
             if datetime is None:
-                return 'N/A'
+                return "N/A"
             return f"{discord.utils.format_dt(datetime)} ({discord.utils.format_dt(datetime, style='R')})"
 
         if isinstance(user, discord.Member):
             spotify = discord.utils.find(lambda activities: isinstance(activities, discord.Spotify), user.activities)
             if isinstance(spotify, discord.Spotify):
-                artists = ', '.join(spotify.artists)
+                artists = ", ".join(spotify.artists)
                 embed.add_field(
-                    name='Spotify',
-                    value=f'Listening to [**{spotify.title}** by **{artists}**]({spotify.track_url}) on **{spotify.album}**',
+                    name="Spotify",
+                    value=f"Listening to [**{spotify.title}** by **{artists}**]({spotify.track_url}) on **{spotify.album}**",
                     inline=False,
                 )
 
         embed.set_thumbnail(url=user.display_avatar.url)
         embed.set_author(name=user, icon_url=user.display_avatar.url)
-        embed.add_field(name='Joined', value=format_date(getattr(user, 'joined_at', None)), inline=False)
-        embed.add_field(name='Registered', value=format_date(ctx.author.created_at), inline=False)
+        embed.add_field(name="Joined", value=format_date(getattr(user, "joined_at", None)), inline=False)
+        embed.add_field(name="Registered", value=format_date(user.created_at), inline=False)
 
         if roles:
-            embed.add_field(name='Roles', value=', '.join(roles) if len(roles) < 15 else f'{len(roles)} roles', inline=False)
+            embed.add_field(name="Roles", value=", ".join(roles) if len(roles) < 15 else f"{len(roles)} roles", inline=False)
 
         embed.add_field(
-            name='Mutual Servers',
-            value=f'You are in `{len(user.mutual_guilds):,}` servers with the bot!',
+            name="Mutual Servers",
+            value=f"You are in `{len(user.mutual_guilds):,}` servers with the bot!",
         )
         embed.set_footer(text=f"User ID: {user.id} | Date: {ctx.message.created_at.strftime('%m/%d/%Y')}")
         await ctx.send(embed=embed)
