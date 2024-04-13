@@ -7,7 +7,7 @@ __pycache__/
 *.so
 
 # Bot config files
-config.json
+config.py
 
 # Distribution / packaging
 .Python
@@ -130,5 +130,3 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-
-# Personal Extensions/Cogs
