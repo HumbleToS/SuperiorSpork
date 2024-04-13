@@ -1,21 +1,17 @@
 import asyncio
-import json
 import logging
 import logging.handlers
-import os
-import pathlib
 import sys
+from pathlib import Path
 
+import asyncpg
 import discord
+from aiohttp import ClientSession
 from discord import Activity, ActivityType, Status
 from discord.ext import commands
 
-CONFIG_FILENAME = "config.json"
-current_working_dir = pathlib.Path(__file__).parent
-config_path = current_working_dir / CONFIG_FILENAME
-
-with pathlib.Path.open(config_path) as fp:
-    config = json.load(fp)
+import config
+from exts import EXTENSIONS
 
 
 def setup_logging() -> None:
@@ -35,7 +31,7 @@ def setup_logging() -> None:
     rfh.setLevel(logging.DEBUG)
     rfh.setFormatter(log_fmt)
 
-    HANDLER = sh if config.get("testing") else rfh
+    HANDLER = sh if config.TESTING else rfh
 
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
@@ -46,9 +42,9 @@ _logger = logging.getLogger(__name__)
 
 
 class Spork(commands.Bot):
-    def __init__(self) -> None:
+    def __init__(self, pool: asyncpg.Pool, session: ClientSession) -> None:
         super().__init__(
-            command_prefix=",,",
+            command_prefix=config.PREFIX,
             intents=discord.Intents(
                 emojis=True,
                 guilds=True,
@@ -65,24 +61,17 @@ class Spork(commands.Bot):
             case_insensitive=True,
         )
         self.start_time = discord.utils.utcnow()
+        self.pool = pool
+        self.session = session
 
     async def setup_hook(self) -> None:
-        # Loading Extensions credit: https://github.com/AbstractUmbra/
-        for file in sorted(pathlib.Path("exts").glob("**/[!_]*.py")):
-            if (file.is_dir() and file.name.startswith("util")) or (
-                file.parent.is_dir() and file.parent.name.startswith("util")
-            ):
-                continue
+        for ext in EXTENSIONS:
+            await self.load_extension(ext.name)
+            _logger.info("Loaded %sextension: %s", "module " if ext.ispkg else "", ext.name)
 
-            ext = ".".join(file.parts).removesuffix(".py")
-            try:
-                await self.load_extension(ext)
-                _logger.info("Extension: %s loaded successfully", ext)
-            except Exception as error:
-                _logger.exception("Extension: %s failed to load\n%s", ext, error)
-
-        os.environ["JISHAKU_NO_UNDERSCORE"] = "True"
-        os.environ["JISHAKU_NO_DM_TRACEBACK"] = "True"
+        with Path("./database/schema.sql").open() as file:
+            sql = file.read()
+            await self.pool.execute(sql)
 
         await self.load_extension("jishaku")
         _logger.info("Extension: jishaku loaded successfully")
@@ -93,8 +82,9 @@ class Spork(commands.Bot):
 
 async def main() -> None:
     setup_logging()
-    bot = Spork()
-    await bot.start(config.get("token"), reconnect=True)
+    async with ClientSession() as session, asyncpg.create_pool(config.DB_URL, command_timeout=30) as pool:
+        async with Spork(pool=pool, session=session) as bot:
+            await bot.start(config.TOKEN, reconnect=True)
 
 
 if __name__ == "__main__":
