@@ -9,6 +9,8 @@ import discord
 import psutil
 from discord.ext import commands
 
+from config import PREFIX
+
 from .utils import time as timeutil
 from .utils.embeds import SporkEmbed
 from .utils.emojis import Status
@@ -37,7 +39,7 @@ class General(commands.Cog):
             return
         if re.fullmatch(rf"<@!?{guild.me.id}>", message.content):
             embed = SporkEmbed(
-                description="Hello! My prefix is `,,`",
+                description=f"Hello! My prefix is `{PREFIX}`",
             )
             return await message.reply(embed=embed)
         return
