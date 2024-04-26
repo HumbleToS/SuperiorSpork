@@ -165,7 +165,7 @@ class General(commands.Cog):
         embed.add_field(
             name="Host Information",
             value=f"CPU Usage: `{self._current_process.cpu_percent()}%`\n"
-            f"RAM Usage: `{self._current_process.memory_percent():.2}`\n"
+            f"RAM Usage: `{self._current_process.memory_percent():.2}%`\n"
             f"Running on `{self._current_process.num_threads()}` threads",
             inline=False,
         )
