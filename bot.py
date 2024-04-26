@@ -44,7 +44,7 @@ _logger = logging.getLogger(__name__)
 class Spork(commands.Bot):
     def __init__(self, pool: asyncpg.Pool, session: ClientSession) -> None:
         super().__init__(
-            command_prefix=config.PREFIX,
+            command_prefix=commands.when_mentioned_or(config.PREFIX),
             intents=discord.Intents(
                 emojis=True,
                 guilds=True,
