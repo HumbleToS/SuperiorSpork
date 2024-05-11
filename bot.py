@@ -57,7 +57,7 @@ class Spork(commands.Bot):
                 voice_states=True,
             ),
             status=Status.dnd,
-            activity=Activity(type=ActivityType.watching, name="my bad code | ,,help"),
+            activity=Activity(type=ActivityType.watching, name=f"my bad code | {config.PREFIX}help"),
             case_insensitive=True,
         )
         self.start_time = discord.utils.utcnow()
