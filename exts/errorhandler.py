@@ -26,7 +26,6 @@ class ErorrHandler(commands.Cog):
         tree.on_error = self._original_handler
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
-
         if isinstance(error, app_commands.CommandOnCooldown):
             current_cooldown = math.floor(error.retry_after * 100) / 100
             return await interaction.response.send_message(
@@ -38,12 +37,11 @@ class ErorrHandler(commands.Cog):
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> None | discord.Message:
-
         if hasattr(ctx.command, "on_error"):
             return
 
         ignored = (commands.CommandNotFound, commands.NotOwner)
-        error = getattr(error, 'original', error)
+        error = getattr(error, "original", error)
         command_used = ctx.invoked_with
 
         if isinstance(error, ignored):
@@ -63,7 +61,7 @@ class ErorrHandler(commands.Cog):
         elif isinstance(error, commands.CheckFailure):
             return _logger.info(error)
         elif isinstance(error, NotGuildOwner):
-            return await ctx.send(f'The command `{command_used}` can only be used by the server owner.')
+            return await ctx.send(f"The command `{command_used}` can only be used by the server owner.")
         else:
             trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))
             _logger.exception(f"Ignoring exception in command {ctx.command}:\n {trace}")
