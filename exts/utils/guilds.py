@@ -50,7 +50,7 @@ class GuildGraphics:
         if self.splash:
             ret += f"\n**Splash:** [click here]({self.splash.url})"
         if self.banner:
-            ret += f"\n**Banner:** [click here]({self.banner.url}))"
+            ret += f"\n**Banner:** [click here]({self.banner.url})"
 
         return ret.strip()
 
