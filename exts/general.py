@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 import re
 import time
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING
 
 import discord
 import psutil
@@ -19,8 +20,6 @@ from .utils.guilds import GuildGraphics
 from .utils.wording import plural
 
 if TYPE_CHECKING:
-    import datetime
-
     from discord.ext.commands import Context
 
     from bot import Spork
@@ -176,6 +175,63 @@ class General(commands.Cog):
         )
         embed.set_thumbnail(url=guild.icon)
         embed.set_footer(text=f"The server is {guild_age} • Guild ID: {guild.id}")
+        await ctx.send(embed=embed)
+
+    @commands.hybrid_command()
+    async def inviteinfo(self, ctx: Context, invite_code: str) -> discord.Message | None:
+        invite = await self.bot.fetch_invite(invite_code, with_counts=True, with_expiration=True)
+
+        if invite is None:
+            return await ctx.send("Could not get information about that invite.")
+
+        embed = discord.Embed(title="Invite Information", color=discord.Color.blue())
+        if invite.inviter:
+            user_info = f"Name and ID: {invite.inviter} `({invite.inviter.id})`\nRegistered on {discord.utils.format_dt(invite.inviter.created_at)}"
+        else:
+            user_info = "I could not fetch any user information, this could be due to a vanity invite."
+
+        embed.add_field(name="User Information", value=user_info, inline=True)
+
+        if isinstance(invite.guild, (discord.PartialInviteGuild, discord.Guild)):
+            guild_age = timeutil.how_old(discord.utils.utcnow() - invite.guild.created_at)
+
+            embed.description = f"Invite information about [{invite.code}]({invite.url}) {f'(the vanity is {invite.guild.vanity_url_code})' if invite.guild.vanity_url_code else ''} and has been used `{f'{invite.uses:,}' if invite.uses is not None else '0'}` times."
+
+            if isinstance(invite.expires_at, datetime.datetime):
+                embed.add_field(
+                    name="The Invites Demise",
+                    value=f"{discord.utils.format_dt(invite.expires_at)} ({discord.utils.format_dt(invite.expires_at, "R")})",
+                    inline=False,
+                )
+
+            embed.add_field(
+                name=f"{invite.guild.name} Description",
+                value=f"{invite.guild.description if invite.guild.description else 'No guild description found.'}",
+                inline=False,
+            )
+
+            embed.add_field(
+                name="Guild Created On",
+                value=f"{discord.utils.format_dt(invite.guild.created_at)}\n(That's {guild_age}!)",
+                inline=True,
+            )
+
+            embed.add_field(name="Verification Level", value=f"{invite.guild.verification_level!s}".capitalize())
+            embed.add_field(name="Graphics", value=GuildGraphics.from_guild(invite.guild).to_text().replace("**", ""))
+
+            if isinstance(invite.channel, (discord.PartialInviteChannel, discord.abc.GuildChannel)):
+                embed.add_field(
+                    name="Invite Channel",
+                    value=f"[#{invite.channel}](https://discord.com/channels/{invite.guild.id}/{invite.channel.id}) `({invite.channel.id})`\nCreated on {discord.utils.format_dt(invite.channel.created_at)}",
+                )
+
+            embed.set_footer(text=f"{invite.guild.name} | {invite.guild.id}")
+
+            embed.add_field(
+                name="Member Counts",
+                value=f"Users Online: `{invite.approximate_presence_count:,}`\nMember Count: `{invite.approximate_member_count:,}`\nBooster Count: `{f'{invite.guild.premium_subscription_count:,}' if invite.guild.premium_subscription_count != 0 else ':('}`",
+            )
+
         await ctx.send(embed=embed)
 
     @commands.hybrid_command()
