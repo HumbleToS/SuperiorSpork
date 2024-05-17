@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import discord
 import psutil
+from discord import app_commands
 from discord.ext import commands
 
 from config import PREFIX
@@ -178,6 +179,8 @@ class General(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.hybrid_command()
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def inviteinfo(self, ctx: Context, invite_code: str) -> discord.Message | None:
         invite = await self.bot.fetch_invite(invite_code, with_counts=True, with_expiration=True)
 
