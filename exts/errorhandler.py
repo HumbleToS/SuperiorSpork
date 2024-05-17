@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import logging
 import math
 import traceback
+from typing import TYPE_CHECKING
 
 import discord
 from discord import app_commands
@@ -9,11 +12,14 @@ from discord.ext import commands
 from .utils.checks import NotGuildOwner
 from .utils.wording import plural
 
+if TYPE_CHECKING:
+    from bot import Spork
+
 _logger = logging.getLogger(__name__)
 
 
 class ErorrHandler(commands.Cog):
-    def __init__(self, bot: commands.Bot) -> None:
+    def __init__(self, bot: Spork) -> None:
         self.bot = bot
 
     def cog_load(self) -> None:
@@ -67,5 +73,5 @@ class ErorrHandler(commands.Cog):
             _logger.exception(f"Ignoring exception in command {ctx.command}:\n {trace}")
 
 
-async def setup(bot: commands.Bot) -> None:
+async def setup(bot: Spork) -> None:
     await bot.add_cog(ErorrHandler(bot))
