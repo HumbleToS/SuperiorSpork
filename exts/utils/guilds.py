@@ -15,7 +15,7 @@ class GuildGraphics:
     banner: discord.Asset | None
 
     @classmethod
-    def from_guild(cls, guild: discord.Guild, /) -> GuildGraphics:
+    def from_guild(cls, guild: discord.Guild | discord.PartialInviteGuild, /) -> GuildGraphics:
         guild_id = guild.id
         icon = guild.icon
         splash = guild.splash
