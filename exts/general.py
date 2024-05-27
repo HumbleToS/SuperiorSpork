@@ -14,11 +14,11 @@ from discord.ext import commands
 
 from config import PREFIX
 
-from .utils import time as timeutil
 from .utils.embeds import SporkEmbed
 from .utils.emojis import Status
 from .utils.guilds import GuildGraphics
-from .utils.wording import plural
+from .utils.time import how_old, ts
+from .utils.wording import Plural
 
 if TYPE_CHECKING:
     from discord.ext.commands import Context
@@ -91,7 +91,7 @@ class General(commands.Cog):
         def format_date(datetime: datetime.datetime | None) -> str:
             if datetime is None:
                 return "N/A"
-            return f"{discord.utils.format_dt(datetime)} ({discord.utils.format_dt(datetime, style='R')})"
+            return f"{ts(datetime)} ({ts(datetime):R})"
 
         if isinstance(user, discord.Member):
             spotify = discord.utils.find(lambda activities: isinstance(activities, discord.Spotify), user.activities)
@@ -123,20 +123,20 @@ class General(commands.Cog):
     async def serverinfo(self, ctx: GuildContext) -> None:
         """Show general info about the server"""
         guild = ctx.guild
-        guild_age = timeutil.how_old(discord.utils.utcnow() - guild.created_at)
+        guild_age = how_old(discord.utils.utcnow() - guild.created_at)
         bots = sum(member.bot for member in guild.members)
 
         # Last boost, status info, role count inspired by:
         # https://github.com/DuckBot-Discord/DuckBot
         last_boost = max(guild.members, key=lambda m: m.premium_since or guild.created_at)
         if last_boost.premium_since is not None:
-            boost = f"\n{last_boost}" f"\n╰ {discord.utils.format_dt(last_boost.premium_since, style='R')}"
+            boost = f"\n{last_boost}" f"\n╰ {ts(last_boost.premium_since):R}"
         else:
             boost = "No active boosters"
 
         embed = SporkEmbed(
             title=guild.name,
-            description=f"__{len(guild.members):,}__ {plural('member', guild.members)} are in this server!",
+            description=f"__{len(guild.members):,}__ {Plural(len(guild.members)):member} are in this server!",
         )
         embed.add_field(
             name="Info",
@@ -147,7 +147,7 @@ class General(commands.Cog):
         )
         embed.add_field(
             name="Boosts",
-            value=f"**Level:** {guild.premium_tier} | {guild.premium_subscription_count:,} {plural('Boost', guild.premium_subscription_count)}"
+            value=f"**Level:** {guild.premium_tier} | {guild.premium_subscription_count:,} {Plural(guild.premium_subscription_count):Boost}"
             f"\n**Booster Count:** {len(guild.premium_subscribers):,}"
             f"\n**Last Booster:** {boost}",
             inline=True,
@@ -156,7 +156,7 @@ class General(commands.Cog):
         embed.add_field(name="Graphics", value=GuildGraphics.from_guild(guild), inline=True)
         embed.add_field(
             name="Members",
-            value=f"**Total:** {len([m for m in guild.members if not m.bot]):,} {plural('member', guild.members)} ({bots:,} {plural('bot', bots)})"
+            value=f"**Total:** {len([m for m in guild.members if not m.bot]):,} {Plural(len(guild.members)):member} ({bots:,} {Plural(bots):bot})"
             f"\n**Member Limit:** {guild.max_members:,}",
             inline=True,
         )
@@ -182,6 +182,7 @@ class General(commands.Cog):
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def inviteinfo(self, ctx: Context, invite_code: str) -> discord.Message | None:
+        """Get information about a guilds invite"""
         invite = await self.bot.fetch_invite(invite_code, with_counts=True, with_expiration=True)
 
         if invite is None:
@@ -189,21 +190,23 @@ class General(commands.Cog):
 
         embed = discord.Embed(title="Invite Information", color=discord.Color.blue())
         if invite.inviter:
-            user_info = f"Name and ID: {invite.inviter} `({invite.inviter.id})`\nRegistered on {discord.utils.format_dt(invite.inviter.created_at)}"
+            user_info = f"Name and ID: {invite.inviter} `({invite.inviter.id})`"
+            f"\nRegistered on {ts(invite.inviter.created_at)}"
         else:
             user_info = "I could not fetch any user information, this could be due to a vanity invite."
 
         embed.add_field(name="User Information", value=user_info, inline=True)
 
         if isinstance(invite.guild, (discord.PartialInviteGuild, discord.Guild)):
-            guild_age = timeutil.how_old(discord.utils.utcnow() - invite.guild.created_at)
+            guild_age = how_old(discord.utils.utcnow() - invite.guild.created_at)
 
-            embed.description = f"Invite information about [{invite.code}]({invite.url}) {f'(the vanity is {invite.guild.vanity_url_code})' if invite.guild.vanity_url_code else ''} and has been used `{f'{invite.uses:,}' if invite.uses is not None else '0'}` times."
+            embed.description = f"Invite information about [{invite.code}]({invite.url})"
+            f"{f'(the vanity is {invite.guild.vanity_url_code})' if invite.guild.vanity_url_code else ''} and has been used `{f'{invite.uses:,}' if invite.uses is not None else '0'}` times."
 
             if isinstance(invite.expires_at, datetime.datetime):
                 embed.add_field(
                     name="The Invites Demise",
-                    value=f"{discord.utils.format_dt(invite.expires_at)} ({discord.utils.format_dt(invite.expires_at, "R")})",
+                    value=f"{ts(invite.expires_at)} ({ts(invite.expires_at):R})",
                     inline=False,
                 )
 
@@ -215,7 +218,7 @@ class General(commands.Cog):
 
             embed.add_field(
                 name="Guild Created On",
-                value=f"{discord.utils.format_dt(invite.guild.created_at)}\n(That's {guild_age}!)",
+                value=f"{ts(invite.guild.created_at)}\n(That's {guild_age}!)",
                 inline=True,
             )
 
@@ -225,7 +228,7 @@ class General(commands.Cog):
             if isinstance(invite.channel, (discord.PartialInviteChannel, discord.abc.GuildChannel)):
                 embed.add_field(
                     name="Invite Channel",
-                    value=f"[#{invite.channel}](https://discord.com/channels/{invite.guild.id}/{invite.channel.id}) `({invite.channel.id})`\nCreated on {discord.utils.format_dt(invite.channel.created_at)}",
+                    value=f"[#{invite.channel}](https://discord.com/channels/{invite.guild.id}/{invite.channel.id}) `({invite.channel.id})`\nCreated on {ts(invite.channel.created_at)}",
                 )
 
             embed.set_footer(text=f"{invite.guild.name} | {invite.guild.id}")
@@ -247,7 +250,7 @@ class General(commands.Cog):
         seconds_running = (discord.utils.utcnow() - self.bot.start_time).seconds
         embed = SporkEmbed(
             title="Statistics",
-            description=f"Running since {discord.utils.format_dt(self.bot.start_time, style='f')}",
+            description=f"Running since {ts(self.bot.start_time):f}",
         )
         embed.add_field(
             name="Bot Information",
