@@ -18,7 +18,7 @@ from .utils.embeds import SporkEmbed
 from .utils.emojis import Status
 from .utils.guilds import GuildGraphics
 from .utils.time import how_old, ts
-from .utils.wording import Plural
+from .utils.wording import plural
 
 if TYPE_CHECKING:
     from discord.ext.commands import Context
@@ -142,7 +142,7 @@ class General(commands.Cog):
 
         embed = SporkEmbed(
             title=guild.name,
-            description=f"__{len(guild.members):,}__ {Plural(len(guild.members)):member} are in this server!",
+            description=f"__{len(guild.members):,}__ {plural(len(guild.members)):member} are in this server!",
         )
         embed.add_field(
             name="Info",
@@ -153,7 +153,7 @@ class General(commands.Cog):
         )
         embed.add_field(
             name="Boosts",
-            value=f"**Level:** {guild.premium_tier} | {guild.premium_subscription_count:,} {Plural(guild.premium_subscription_count):Boost}"
+            value=f"**Level:** {guild.premium_tier} | {guild.premium_subscription_count:,} {plural(guild.premium_subscription_count):Boost}"
             f"\n**Booster Count:** {len(guild.premium_subscribers):,}"
             f"\n**Last Booster:** {boost}",
             inline=True,
@@ -162,7 +162,7 @@ class General(commands.Cog):
         embed.add_field(name="Graphics", value=GuildGraphics.from_guild(guild), inline=True)
         embed.add_field(
             name="Members",
-            value=f"**Total:** {len([m for m in guild.members if not m.bot]):,} {Plural(len(guild.members)):member} ({bots:,} {Plural(bots):bot})"
+            value=f"**Total:** {len([m for m in guild.members if not m.bot]):,} {plural(len(guild.members)):member} ({bots:,} {plural(bots):bot})"
             f"\n**Member Limit:** {guild.max_members:,}",
             inline=True,
         )

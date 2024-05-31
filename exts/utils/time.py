@@ -3,7 +3,7 @@ from datetime import timedelta
 
 import discord
 
-from .wording import Plural
+from .wording import plural
 
 
 class ts:
@@ -17,4 +17,4 @@ class ts:
 
 def how_old(time: timedelta) -> str:
     days, hours = time.days, time.seconds // 36001
-    return f"{days:,} days and {hours:,} {Plural(hours):hour} old"
+    return f"{days:,} days and {hours:,} {plural(hours):hour} old"

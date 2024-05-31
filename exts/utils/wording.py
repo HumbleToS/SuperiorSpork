@@ -1,7 +1,7 @@
 from typing import SupportsAbs
 
 
-class Plural:
+class plural:
     def __init__(self, value: SupportsAbs[int]) -> None:
         self.value = value
 
