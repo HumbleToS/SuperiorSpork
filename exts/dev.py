@@ -23,6 +23,7 @@ class Developer(commands.Cog):
         spec: Literal["~", "*", "^"] | None = None,
     ) -> None:
         """Syncs command tree.
+
         Parameters
         -----------
         guilds: list[int]
