@@ -82,7 +82,13 @@ class General(commands.Cog):
     @commands.hybrid_command()
     @commands.guild_only()
     async def whois(self, ctx: GuildContext, *, user: discord.Member | discord.User | None = None) -> None:
-        """Show info about a user"""
+        """Shows info about a user
+
+        Parameters
+        ----------
+        user : discord.Member | discord.User | None, optional
+            A user or guild member, by default None
+        """
         user = user or ctx.author
         embed = SporkEmbed()
         # Roles and format_date credit: https://github.com/Rapptz/RoboDanny
@@ -91,7 +97,7 @@ class General(commands.Cog):
         def format_date(datetime: datetime.datetime | None) -> str:
             if datetime is None:
                 return "N/A"
-            return f"{ts(datetime)} ({ts(datetime):R})"
+            return f"{ts(datetime):F} ({ts(datetime):R})"
 
         if isinstance(user, discord.Member):
             spotify = discord.utils.find(lambda activities: isinstance(activities, discord.Spotify), user.activities)
@@ -182,7 +188,13 @@ class General(commands.Cog):
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def inviteinfo(self, ctx: Context, invite_code: str) -> discord.Message | None:
-        """Get information about a guilds invite"""
+        """Get information about a guilds invite
+
+        Parameters
+        ----------
+        invite_code : str
+            A guilds invite or vanity
+        """
         invite = await self.bot.fetch_invite(invite_code, with_counts=True, with_expiration=True)
 
         if invite is None:
@@ -191,7 +203,7 @@ class General(commands.Cog):
         embed = discord.Embed(title="Invite Information", color=discord.Color.blue())
         if invite.inviter:
             user_info = f"Name and ID: {invite.inviter} `({invite.inviter.id})`"
-            f"\nRegistered on {ts(invite.inviter.created_at)}"
+            f"\nRegistered on {ts(invite.inviter.created_at):F}"
         else:
             user_info = "I could not fetch any user information, this could be due to a vanity invite."
 
@@ -206,7 +218,7 @@ class General(commands.Cog):
             if isinstance(invite.expires_at, datetime.datetime):
                 embed.add_field(
                     name="The Invites Demise",
-                    value=f"{ts(invite.expires_at)} ({ts(invite.expires_at):R})",
+                    value=f"{ts(invite.expires_at):F} ({ts(invite.expires_at):R})",
                     inline=False,
                 )
 
@@ -218,7 +230,7 @@ class General(commands.Cog):
 
             embed.add_field(
                 name="Guild Created On",
-                value=f"{ts(invite.guild.created_at)}\n(That's {guild_age}!)",
+                value=f"{ts(invite.guild.created_at):F}\n(That's {guild_age}!)",
                 inline=True,
             )
 
@@ -228,7 +240,7 @@ class General(commands.Cog):
             if isinstance(invite.channel, (discord.PartialInviteChannel, discord.abc.GuildChannel)):
                 embed.add_field(
                     name="Invite Channel",
-                    value=f"[#{invite.channel}](https://discord.com/channels/{invite.guild.id}/{invite.channel.id}) `({invite.channel.id})`\nCreated on {ts(invite.channel.created_at)}",
+                    value=f"[#{invite.channel}](https://discord.com/channels/{invite.guild.id}/{invite.channel.id}) `({invite.channel.id})`\nCreated on {ts(invite.channel.created_at):F}",
                 )
 
             embed.set_footer(text=f"{invite.guild.name} | {invite.guild.id}")
@@ -250,7 +262,7 @@ class General(commands.Cog):
         seconds_running = (discord.utils.utcnow() - self.bot.start_time).seconds
         embed = SporkEmbed(
             title="Statistics",
-            description=f"Running since {ts(self.bot.start_time):f}",
+            description=f"Running since {ts(self.bot.start_time):F}",
         )
         embed.add_field(
             name="Bot Information",
