@@ -1,6 +1,11 @@
-from typing import Any, Literal
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Literal
 
 from discord.ext import commands
+
+if TYPE_CHECKING:
+    from discord.ext.commands._types import Check
 
 
 class NotGuildOwner(commands.CheckFailure):
@@ -9,7 +14,7 @@ class NotGuildOwner(commands.CheckFailure):
     pass
 
 
-def is_guild_owner():  # noqa: ANN201 # Cannot find return type of commands.check
+def is_guild_owner() -> Check[commands.Context[Any]]:
     """Checks if the guild owner ran the command."""
 
     async def guild_owner(ctx: commands.Context) -> Literal[True]:
