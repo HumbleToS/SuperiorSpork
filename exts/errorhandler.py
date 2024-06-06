@@ -35,7 +35,7 @@ class ErorrHandler(commands.Cog):
         if isinstance(error, app_commands.CommandOnCooldown):
             current_cooldown = math.floor(error.retry_after * 100) / 100
             return await interaction.response.send_message(
-                f"This command is on cooldown for another {current_cooldown} {plural(int(current_cooldown)):second}!"
+                f"This command is on cooldown for another {plural(int(current_cooldown)):second}!"
             )
         else:
             trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))
@@ -55,9 +55,7 @@ class ErorrHandler(commands.Cog):
 
         if isinstance(error, commands.CommandOnCooldown):
             current_cooldown = math.floor(error.retry_after * 100) / 100
-            return await ctx.send(
-                f"You can do `{command_used}` again in {current_cooldown} {plural(int(current_cooldown)):second}"
-            )
+            return await ctx.send(f"You can do `{command_used}` again in {plural(int(current_cooldown)):second}")
         elif isinstance(error, commands.TooManyArguments):
             return await ctx.send(f"The command `{command_used}` was used with too many arguments")
         elif isinstance(error, commands.UserInputError):
