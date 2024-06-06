@@ -162,7 +162,7 @@ class General(commands.Cog):
         embed.add_field(name="Graphics", value=GuildGraphics.from_guild(guild), inline=True)
         embed.add_field(
             name="Members",
-            value=f"**Total:** {len([m for m in guild.members if not m.bot]):,} {plural(len(guild.members)):member} ({plural(bots):bot})"
+            value=f"**Total:** {plural(len(guild.members)):member} ({plural(bots):bot})"
             f"\n**Member Limit:** {guild.max_members:,}",
             inline=True,
         )
