@@ -142,7 +142,7 @@ class General(commands.Cog):
 
         embed = SporkEmbed(
             title=guild.name,
-            description=f"__{len(guild.members):,}__ {plural(len(guild.members)):member} are in this server!",
+            description=f"{plural(len(guild.members)):member} are in this server!",
         )
         embed.add_field(
             name="Info",
@@ -153,7 +153,7 @@ class General(commands.Cog):
         )
         embed.add_field(
             name="Boosts",
-            value=f"**Level:** {guild.premium_tier} | {guild.premium_subscription_count:,} {plural(guild.premium_subscription_count):Boost}"
+            value=f"**Level:** {guild.premium_tier} | {plural(guild.premium_subscription_count):Boost}"
             f"\n**Booster Count:** {len(guild.premium_subscribers):,}"
             f"\n**Last Booster:** {boost}",
             inline=True,
@@ -162,7 +162,7 @@ class General(commands.Cog):
         embed.add_field(name="Graphics", value=GuildGraphics.from_guild(guild), inline=True)
         embed.add_field(
             name="Members",
-            value=f"**Total:** {len([m for m in guild.members if not m.bot]):,} {plural(len(guild.members)):member} ({bots:,} {plural(bots):bot})"
+            value=f"**Total:** {len([m for m in guild.members if not m.bot]):,} {plural(len(guild.members)):member} ({plural(bots):bot})"
             f"\n**Member Limit:** {guild.max_members:,}",
             inline=True,
         )
