@@ -200,7 +200,7 @@ class General(commands.Cog):
         if invite is None:
             return await ctx.send("Could not get information about that invite.")
 
-        embed = discord.Embed(title="Invite Information", color=discord.Color.blue())
+        embed = SporkEmbed(title="Invite Information")
         if invite.inviter:
             user_info = f"Name and ID: {invite.inviter} `({invite.inviter.id})`"
             f"\nRegistered on {ts(invite.inviter.created_at):F}"
@@ -259,7 +259,7 @@ class General(commands.Cog):
         await ctx.channel.typing()
         after_check = time.perf_counter()
         api_latency = (after_check - before_check) * 1000
-        seconds_running = (discord.utils.utcnow() - self.bot.start_time).seconds
+        seconds_running = (discord.utils.utcnow() - self.bot.start_time).total_seconds()
         embed = SporkEmbed(
             title="Statistics",
             description=f"Running since {ts(self.bot.start_time):F}",
@@ -268,7 +268,7 @@ class General(commands.Cog):
             name="Bot Information",
             value=f"Total Guilds: `{len(self.bot.guilds):,}`\n"
             f"Total Users: `{len(self.bot.users):,}`\n"
-            f"Total Seconds Running: `{seconds_running:,}s`",
+            f"Total Seconds Running: `{int(seconds_running):,}s`",
             inline=True,
         )
         embed.add_field(
