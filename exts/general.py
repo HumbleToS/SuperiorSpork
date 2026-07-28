@@ -35,6 +35,7 @@ class General(commands.Cog):
     def __init__(self, bot: Spork) -> None:
         self.bot = bot
         self._current_process = psutil.Process(os.getpid())
+        self._current_process.cpu_percent()  # the first reading is always 0.0, prime it
 
     @commands.Cog.listener(name="on_message")
     async def mention_responder(self, message: discord.Message) -> discord.Message | None:
@@ -307,7 +308,7 @@ class General(commands.Cog):
         embed.add_field(
             name="Host Information",
             value=f"CPU Usage: `{self._current_process.cpu_percent()}%`\n"
-            f"RAM Usage: `{self._current_process.memory_percent():.2}%`\n"
+            f"RAM Usage: `{self._current_process.memory_percent():.2f}%`\n"
             f"Running on `{self._current_process.num_threads()}` threads",
             inline=False,
         )
