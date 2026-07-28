@@ -158,6 +158,7 @@ class General(commands.Cog):
         """Show general info about the server"""
         guild = ctx.guild
         guild_age = how_old(discord.utils.utcnow() - guild.created_at)
+        member_count = guild.member_count or len(guild.members)
         bots = sum(member.bot for member in guild.members)
 
         # Last boost, status info, role count inspired by:
@@ -170,7 +171,7 @@ class General(commands.Cog):
 
         embed = SporkEmbed(
             title=guild.name,
-            description=f"{plural(len(guild.members)):member} are in this server!",
+            description=f"{plural(member_count):member} are in this server!",
         )
         embed.add_field(
             name="Info",
@@ -190,8 +191,7 @@ class General(commands.Cog):
         embed.add_field(name="Graphics", value=GuildGraphics.from_guild(guild), inline=True)
         embed.add_field(
             name="Members",
-            value=f"**Total:** {plural(len(guild.members)):member} ({plural(bots):bot})"
-            f"\n**Member Limit:** {guild.max_members:,}",
+            value=f"**Total:** {plural(member_count):member} ({plural(bots):bot})\n**Member Limit:** {guild.max_members:,}",
             inline=True,
         )
 
@@ -226,7 +226,7 @@ class General(commands.Cog):
         """
         await ctx.defer()
         try:
-            invite = await self.bot.fetch_invite(invite_code, with_counts=True, with_expiration=True)
+            invite = await self.bot.fetch_invite(invite_code, with_counts=True)
         except discord.NotFound:
             return await ctx.send("Could not get information about that invite.")
 
