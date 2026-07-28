@@ -52,6 +52,7 @@ class General(commands.Cog):
     @commands.hybrid_command()
     @commands.guild_only()
     @is_guild_owner()
+    @app_commands.describe(new_prefix="The new prefix, leave empty to see the current one")
     async def prefix(self, ctx: GuildContext, new_prefix: str | None = None) -> None:
         """Shows or changes my prefix for this server
 
@@ -106,6 +107,7 @@ class General(commands.Cog):
 
     @commands.hybrid_command()
     @commands.guild_only()
+    @app_commands.describe(user="A user or guild member, defaults to you")
     async def whois(self, ctx: GuildContext, *, user: discord.Member | discord.User | None = None) -> None:
         """Shows info about a user
 
@@ -212,6 +214,7 @@ class General(commands.Cog):
     @commands.hybrid_command()
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    @app_commands.describe(invite_code="A guilds invite or vanity")
     async def inviteinfo(self, ctx: Context, invite_code: str) -> discord.Message | None:
         """Get information about a guilds invite
 
@@ -220,6 +223,7 @@ class General(commands.Cog):
         invite_code : str
             A guilds invite or vanity
         """
+        await ctx.defer()
         try:
             invite = await self.bot.fetch_invite(invite_code, with_counts=True, with_expiration=True)
         except discord.NotFound:

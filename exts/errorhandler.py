@@ -34,9 +34,11 @@ class ErorrHandler(commands.Cog):
     async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
         if isinstance(error, app_commands.CommandOnCooldown):
             current_cooldown = math.floor(error.retry_after * 100) / 100
-            return await interaction.response.send_message(
-                f"This command is on cooldown for another {plural(int(current_cooldown)):second}!"
-            )
+            message = f"This command is on cooldown for another {plural(int(current_cooldown)):second}!"
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
         else:
             trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))
             _logger.exception(f"Ignoring exception in command {interaction.command}:\n {trace}")
