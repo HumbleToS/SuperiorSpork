@@ -1,0 +1,15 @@
+.git
+.github
+.gitignore
+.dockerignore
+.pre-commit-config.yaml
+.venv
+venv
+__pycache__
+*.pyc
+.ruff_cache
+.env
+config.py
+logs/
+data/
+*.md

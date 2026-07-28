@@ -1,0 +1,45 @@
+services:
+  bot:
+    build: .
+    image: superiorspork:latest
+    container_name: superiorspork
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./config.py:/app/config.py:ro
+      - spork-logs:/app/logs
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  db:
+    image: postgres:17-alpine
+    container_name: spork-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: spork
+      POSTGRES_DB: spork
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - spork-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spork -d spork"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  spork-db-data:
+  spork-logs:
