@@ -25,7 +25,9 @@ services:
     environment:
       POSTGRES_USER: spork
       POSTGRES_DB: spork
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      # Only read on first-time volume init; the password's home is the DSN
+      # in config.py. Pass it inline if you ever recreate the volume.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     volumes:
       - spork-db-data:/var/lib/postgresql/data
     healthcheck:

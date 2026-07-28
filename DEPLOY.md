@@ -5,20 +5,27 @@ containers, `superiorspork` (the bot) and `spork-db` (Postgres 17), on the
 compose project's private network. No ports are published, nothing is routed
 through Traefik, and there is no HTTP surface.
 
-Secrets never enter the image: `config.py` is bind-mounted read-only at
-runtime and `.dockerignore` excludes it from the build context.
+**`config.py` is the single secrets file.** It is bind-mounted read-only at
+runtime, `.dockerignore` excludes it from the build context, and there is no
+`.env` — the Postgres password's one home is the DSN inside `config.py`.
 
 ## First run
 
 ```bash
 cp config.example.py config.py   # fill TOKEN; set both DSNs to
                                  # postgresql://spork:<password>@db:5432/spork
-cp .env.example .env             # set POSTGRES_PASSWORD=<same password>
-chmod 600 config.py .env
+                                 # (generate: openssl rand -hex 24)
+chmod 600 config.py
 setfacl -m u:10001:r config.py   # the container runs as UID 10001 and needs
                                  # read on the bind-mounted config
-docker compose up -d --build
+POSTGRES_PASSWORD=<same password> docker compose up -d --build
 ```
+
+Postgres only reads `POSTGRES_PASSWORD` the very first time its data volume
+is created; after that the inline variable is unnecessary and a plain
+`docker compose up -d` is all you ever type. If you ever delete the
+`spork-db-data` volume, run the inline form again with the password from
+`config.py`.
 
 `TESTING` in `config.py` picks which token/prefix pair is used; the DSNs both
 point at the container DB, so either mode works inside compose. Note that
