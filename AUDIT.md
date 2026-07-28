@@ -98,6 +98,9 @@ Phase 0 is audit-only.
 | B7 | `bot.py:79-80` | `on_message_edit` re-runs `process_commands` with no guard — fires on embed-unfurl edits too (`before.content == after.content`), which can double-run a command the user never re-sent | duplicate command responses |
 | B8 | `exts/general.py:198` | Invalid invite code → `fetch_invite` raises `NotFound`, which no handler maps to a user message. Also the `invite is None` check at 200 is dead (`fetch_invite` raises, never returns None) | prefix use: silence; slash use: "The application did not respond" |
 
+**Status (2026-07-28): all eight confirmed bugs are fixed — B5 in Phase 7,
+B1–B4 and B6–B8 in Phase 2.**
+
 Smaller display defects, same spirit: `exts/general.py:277` `:.2` formats RAM
 as 2 *significant digits* (`0.42%`) instead of `:.2f`; `psutil.cpu_percent()`
 first call always reports `0.0%` (`exts/general.py:276`); `plural` output has
@@ -223,9 +226,12 @@ Execution order per your instruction (7 runs right after 1):
   10001, no voice deps), compose with a dedicated `spork-db` Postgres 17
   container, `.dockerignore`, `.env.example`, DEPLOY.md, SIGTERM handling,
   B5 fix. Verified against CLAUDE.md §13.8 (Shape B lines N/A).
-- **Phase 2 — lifecycle & core correctness.** Backlog 2, 8, 9, 10, 11, 12, 13,
-  14. Session/pool lifecycle and no-startup-sync are already correct; this
-  phase is the remaining confirmed bugs + intents + the config accessor.
+- **Phase 2 — lifecycle & core correctness.** *Done 2026-07-28.* Backlog 1, 2,
+  8, 9, 10, 11, 12, 13, 14: all remaining confirmed bugs fixed, unused intents
+  trimmed (privileged ones documented), and the `GuildSettings` accessor makes
+  per-guild prefixes real (live-tested against the deployed database). The
+  new hybrid `prefix` command is owner-gated via the previously-unused
+  `is_guild_owner()` check.
 - **Phase 3 — command layer.** Backlog 16, 17, 18. No command renames planned;
   anything that would rename gets asked first.
 - **Phase 4 — UI layer.** Backlog 22, 23. Smallest phase; no views/modals
