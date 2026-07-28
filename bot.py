@@ -78,7 +78,9 @@ class Spork(commands.Bot):
         _logger.info("Extension: jishaku loaded successfully")
 
     async def on_message_edit(self, before: discord.Message, after: discord.Message) -> None:
-        await self.process_commands(after)
+        # edits also fire when discord unfurls an embed; only re-run on real content changes
+        if before.content != after.content:
+            await self.process_commands(after)
 
 
 async def main() -> None:

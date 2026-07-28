@@ -16,5 +16,5 @@ class ts:
 
 
 def how_old(time: timedelta) -> str:
-    days, hours = time.days, time.seconds // 36001
+    days, hours = time.days, time.seconds // 3600
     return f"{days:,} days and {plural(hours):hour} old"

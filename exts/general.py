@@ -195,15 +195,17 @@ class General(commands.Cog):
         invite_code : str
             A guilds invite or vanity
         """
-        invite = await self.bot.fetch_invite(invite_code, with_counts=True, with_expiration=True)
-
-        if invite is None:
+        try:
+            invite = await self.bot.fetch_invite(invite_code, with_counts=True, with_expiration=True)
+        except discord.NotFound:
             return await ctx.send("Could not get information about that invite.")
 
         embed = SporkEmbed(title="Invite Information")
         if invite.inviter:
-            user_info = f"Name and ID: {invite.inviter} `({invite.inviter.id})`"
-            f"\nRegistered on {ts(invite.inviter.created_at):F}"
+            user_info = (
+                f"Name and ID: {invite.inviter} `({invite.inviter.id})`"
+                f"\nRegistered on {ts(invite.inviter.created_at):F}"
+            )
         else:
             user_info = "I could not fetch any user information, this could be due to a vanity invite."
 
@@ -212,8 +214,11 @@ class General(commands.Cog):
         if isinstance(invite.guild, (discord.PartialInviteGuild, discord.Guild)):
             guild_age = how_old(discord.utils.utcnow() - invite.guild.created_at)
 
-            embed.description = f"Invite information about [{invite.code}]({invite.url})"
-            f"{f'(the vanity is {invite.guild.vanity_url_code})' if invite.guild.vanity_url_code else ''} and has been used `{f'{invite.uses:,}' if invite.uses is not None else '0'}` times."
+            embed.description = (
+                f"Invite information about [{invite.code}]({invite.url})"
+                f"{f' (the vanity is {invite.guild.vanity_url_code})' if invite.guild.vanity_url_code else ''}"
+                f" and has been used `{f'{invite.uses:,}' if invite.uses is not None else '0'}` times."
+            )
 
             if isinstance(invite.expires_at, datetime.datetime):
                 embed.add_field(
