@@ -12,6 +12,8 @@ Format: `- [ ] <action> :: <why> :: <blocking or not>`
 - [ ] Approve renaming class `ErorrHandler` → `ErrorHandler` :: internal-only typo, zero user visibility; you said "no errors", so flagging rather than silently renaming :: not blocking
 - [ ] `exts/private/` can't be audited from this tree :: any deprecations, bugs, or intent dependencies in private cogs are uncovered by AUDIT.md :: not blocking
 
+- [ ] Fill real `TOKEN` and `DB_URL` in the local `config.py` (both are still placeholders — asyncpg rejects the DSN with "scheme is expected to be postgresql") :: without them a full gateway boot can't be verified on this machine; Phase 1 verified everything short of that (import smoke + all 4 extensions load through the real `load_extension` path on discord.py 2.7.1) :: blocking full-boot verification, not blocking Phase 7 work
+
 ## CLAUDE.md `{{CONFIRM}}` tokens still open
 
 - [ ] §1 header: bot name, purpose line, entry point (`bot.py`), package manager (pip today; uv an option), Python version (host is 3.13; ruff says py311 — pick one) :: launch blockers per the contract :: blocking before "done"
