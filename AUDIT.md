@@ -93,7 +93,7 @@ Phase 0 is audit-only.
 | B2 | `exts/general.py:215-216` | Same orphaned-f-string pattern on `embed.description` | `inviteinfo` never shows the vanity/uses sentence |
 | B3 | `exts/utils/time.py:19` | `time.seconds // 36001` — typo for `3600` | the "X days and Y hours old" ages in `serverinfo`/`inviteinfo` report wrong hours almost always (usually 0) |
 | B4 | `exts/errorhandler.py:65-68` | `NotGuildOwner` is a `CheckFailure` subclass, and the `CheckFailure` branch comes first — the `NotGuildOwner` branch is unreachable | latent today (no command uses `is_guild_owner()` yet), but the owner-only message can never be sent |
-| B5 | `bot.py:30` | `RotatingFileHandler("logs/…")` is constructed eagerly, even in TESTING mode — crashes with `FileNotFoundError` if `logs/` doesn't exist (fresh clone, fresh container) | startup blocker on any clean deploy |
+| B5 | `bot.py:30` | `RotatingFileHandler("logs/…")` is constructed eagerly, even in TESTING mode — crashes with `FileNotFoundError` if `logs/` doesn't exist (fresh clone, fresh container) | startup blocker on any clean deploy — **fixed in Phase 7** |
 | B6 | `exts/utils/embeds.py:13-16` | Passing `color=` explicitly makes the `elif` set `colour=` to a random pastel, and `Embed` prefers `colour` — the caller's colour is clobbered. Intended logic is "pastel only when neither was given" | latent (no call site passes a colour yet) |
 | B7 | `bot.py:79-80` | `on_message_edit` re-runs `process_commands` with no guard — fires on embed-unfurl edits too (`before.content == after.content`), which can double-run a command the user never re-sent | duplicate command responses |
 | B8 | `exts/general.py:198` | Invalid invite code → `fetch_invite` raises `NotFound`, which no handler maps to a user message. Also the `invite is None` check at 200 is dead (`fetch_invite` raises, never returns None) | prefix use: silence; slash use: "The application did not respond" |
@@ -184,11 +184,11 @@ the bug fixes, the difference is the point.
 |---|---|---|---|---|
 | 1 | Fix B1/B2 orphaned f-strings | high-value | behavior-changing (restores intended output) | 2 — *amended in Phase 1: ruff 0.16 B018 does not flag f-strings, so this is out of "fix only what ruff flags" scope and joins the other bug fixes* |
 | 2 | Fix B3 `36001` → `3600` | high-value | behavior-changing (correct ages) | 2 |
-| 3 | Fix B5 eager log-file handler (crash on clean deploy; container logs to stdout anyway) | high-value | safe | 7 |
-| 4 | Pin `discord.py>=2.7,<3` (+ pin jishaku release, asyncpg, psutil) | high-value | safe | 1 |
-| 5 | Config → env-var backed (`.env` for the container), keep `config.py` shape | high-value | safe (deploy-only) | 7 |
-| 6 | SIGTERM handler in entry point + graceful shutdown | high-value | safe | 7 |
-| 7 | Shape B health server (`aiohttp.web.Application`, `/health` only) started in `setup_hook`, stopped in overridden `close()` | high-value | safe | 7 |
+| 3 | Fix B5 eager log-file handler (crash on clean deploy; container logs to stdout anyway) | high-value | safe | 7 — **done** |
+| 4 | Pin `discord.py>=2.7,<3` (+ pin jishaku release, asyncpg, psutil) | high-value | safe | 1 — **done** |
+| 5 | Config → env-var backed | high-value | safe (deploy-only) | 7 — **resolved differently**: owner kept `config.py`; it is bind-mounted read-only into the container, never copied into the image |
+| 6 | SIGTERM handler in entry point + graceful shutdown | high-value | safe | 7 — **done** (compose stop: 0.64s) |
+| 7 | Shape B health server | high-value | safe | **dropped** — owner decided Shape A (no HTTP surface) on 2026-07-28, overriding CLAUDE.md §13/kickoff |
 | 8 | Config accessor layer over the unused `guilds` table (per-guild prefix live) | high-value | behavior-changing (per-guild prefixes become real) | 2 |
 | 9 | Fix B8: catch `NotFound` in `inviteinfo`, drop dead `None` check | high-value | behavior-changing (user finally gets an error message) | 2 |
 | 10 | Fix B7: guard `on_message_edit` with `before.content != after.content` | high-value | behavior-changing (no more unfurl double-runs) | 2 |
@@ -218,11 +218,11 @@ Execution order per your instruction (7 runs right after 1):
   CLAUDE.md §5 with `quote-style = "double"`, formatter sweep as its own
   commit, pre-commit + CI (check, format-check, import smoke, `{{CONFIRM}}`
   scan). *(Backlog 1 moved to Phase 2 — see its row.)*
-- **Phase 7 — containerization & deploy.** Backlog 3, 5, 6, 7. Dockerfile
-  (py3.13-slim, UID 10001, no voice deps — audit found no voice), compose
-  Shape B, `.dockerignore`, `.env.example`, DEPLOY.md, Traefik labels with
-  `{{CONFIRM}}` tokens for network/entrypoint/resolver/middleware. Verified
-  against CLAUDE.md §13.8 line by line.
+- **Phase 7 — containerization & deploy.** *Done 2026-07-28 as **Shape A** by
+  owner decision (no `/health`, no Traefik).* Dockerfile (py3.13-slim, UID
+  10001, no voice deps), compose with a dedicated `spork-db` Postgres 17
+  container, `.dockerignore`, `.env.example`, DEPLOY.md, SIGTERM handling,
+  B5 fix. Verified against CLAUDE.md §13.8 (Shape B lines N/A).
 - **Phase 2 — lifecycle & core correctness.** Backlog 2, 8, 9, 10, 11, 12, 13,
   14. Session/pool lifecycle and no-startup-sync are already correct; this
   phase is the remaining confirmed bugs + intents + the config accessor.
