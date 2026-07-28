@@ -13,6 +13,7 @@ from discord.ext import commands
 
 import config
 from exts import EXTENSIONS
+from exts.utils.settings import GuildSettings
 
 
 def setup_logging() -> None:
@@ -46,17 +47,13 @@ _logger = logging.getLogger(__name__)
 class Spork(commands.Bot):
     def __init__(self, pool: asyncpg.Pool, session: ClientSession) -> None:
         super().__init__(
-            command_prefix=commands.when_mentioned_or(config.PREFIX),
+            command_prefix=get_prefix,
             intents=discord.Intents(
-                emojis=True,
                 guilds=True,
-                invites=True,
-                members=True,
-                message_content=True,
+                members=True,  # privileged: member lists, joined_at and mutual guilds in whois/serverinfo
+                message_content=True,  # privileged: prefix commands and the cleanup prefix check
                 messages=True,
-                presences=True,
-                reactions=True,
-                voice_states=True,
+                presences=True,  # privileged: spotify and status counts in whois/serverinfo
             ),
             status=Status.dnd,
             activity=Activity(type=ActivityType.watching, name=f"my bad code | {config.PREFIX}help"),
@@ -65,6 +62,7 @@ class Spork(commands.Bot):
         self.start_time = discord.utils.utcnow()
         self.pool = pool
         self.session = session
+        self.settings = GuildSettings(pool)
 
     async def setup_hook(self) -> None:
         for ext in EXTENSIONS:
@@ -81,6 +79,13 @@ class Spork(commands.Bot):
         # edits also fire when discord unfurls an embed; only re-run on real content changes
         if before.content != after.content:
             await self.process_commands(after)
+
+
+async def get_prefix(bot: Spork, message: discord.Message) -> list[str]:
+    prefix = config.PREFIX
+    if message.guild:
+        prefix = await bot.settings.get_prefix(message.guild.id) or config.PREFIX
+    return commands.when_mentioned_or(prefix)(bot, message)
 
 
 async def main() -> None:
