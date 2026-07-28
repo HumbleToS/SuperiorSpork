@@ -14,6 +14,7 @@ from discord.ext import commands
 
 from config import PREFIX
 
+from .utils.checks import is_guild_owner
 from .utils.embeds import SporkEmbed
 from .utils.emojis import Status
 from .utils.guilds import GuildGraphics
@@ -41,11 +42,35 @@ class General(commands.Cog):
         if not guild:
             return
         if re.fullmatch(rf"<@!?{guild.me.id}>", message.content):
+            prefix = await self.bot.settings.get_prefix(guild.id) or PREFIX
             embed = SporkEmbed(
-                description=f"Hello! My prefix is `{PREFIX}`",
+                description=f"Hello! My prefix is `{prefix}`",
             )
             return await message.reply(embed=embed)
         return
+
+    @commands.hybrid_command()
+    @commands.guild_only()
+    @is_guild_owner()
+    async def prefix(self, ctx: GuildContext, new_prefix: str | None = None) -> None:
+        """Shows or changes my prefix for this server
+
+        Parameters
+        ----------
+        new_prefix : str | None, optional
+            The new prefix, leave empty to see the current one
+        """
+        if new_prefix is None:
+            current = await self.bot.settings.get_prefix(ctx.guild.id) or PREFIX
+            await ctx.send(f"My prefix here is `{current}`")
+            return
+
+        if len(new_prefix) > 10:
+            await ctx.send("That prefix is too long! Keep it to 10 characters or less.")
+            return
+
+        await self.bot.settings.set_prefix(ctx.guild.id, new_prefix)
+        await ctx.send(f"My prefix here is now `{new_prefix}`")
 
     @commands.command(aliases=("cu", "pb"))
     @commands.guild_only()
@@ -203,8 +228,7 @@ class General(commands.Cog):
         embed = SporkEmbed(title="Invite Information")
         if invite.inviter:
             user_info = (
-                f"Name and ID: {invite.inviter} `({invite.inviter.id})`"
-                f"\nRegistered on {ts(invite.inviter.created_at):F}"
+                f"Name and ID: {invite.inviter} `({invite.inviter.id})`\nRegistered on {ts(invite.inviter.created_at):F}"
             )
         else:
             user_info = "I could not fetch any user information, this could be due to a vanity invite."
