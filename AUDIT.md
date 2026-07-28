@@ -232,13 +232,19 @@ Execution order per your instruction (7 runs right after 1):
   per-guild prefixes real (live-tested against the deployed database). The
   new hybrid `prefix` command is owner-gated via the previously-unused
   `is_guild_owner()` check.
-- **Phase 3 — command layer.** Backlog 16, 17, 18. No command renames planned;
-  anything that would rename gets asked first.
-- **Phase 4 — UI layer.** Backlog 22, 23. Smallest phase; no views/modals
-  exist today, so this is "only where V2 genuinely reads better."
-- **Phase 5 — deprecation sweep & platform.** Backlog 15, 19, 20. Backlog 21
-  intentionally skipped with reasons.
-- **Phase 6 — hardening & docs.** Backlog 24, 26, 27 + CheckFailure UX,
-  final `{{CONFIRM}}`/HUMAN-TODO pass. No unbounded caches were found (§6 of
-  CLAUDE.md's worry list doesn't apply — there is no in-memory state keyed by
-  user/guild).
+- **Phase 3 — command layer.** *Done 2026-07-28.* Backlog 16 and 17: describe
+  on whois/inviteinfo/prefix, defer in inviteinfo, ephemeral+is_done-guarded
+  cooldown reply. Backlog 18 deferred to owner preference (cog-swap kept).
+  Transformer/autocomplete/Timestamp skipped — no surface warrants them. No
+  command renames.
+- **Phase 4 — UI layer.** *Done 2026-07-28.* Backlog 23 plus the ts
+  empty-spec guard. Backlog 22 (Components V2) assessed and deliberately not
+  adopted: every surface is a SporkEmbed and none read better as containers.
+- **Phase 5 — deprecation sweep & platform.** *Done 2026-07-28.* Backlog 15
+  and 19. Backlog 20 (application emojis) deferred to HUMAN-TODO — needs the
+  emoji assets. Backlog 21 skipped as planned.
+- **Phase 6 — hardening & docs.** *Done 2026-07-28.* Backlog 24, 26, 27 +
+  NoPrivateMessage now gets a user-facing message. The only per-guild
+  in-memory state is the GuildSettings prefix cache, bounded by guild
+  membership. Remaining `{{CONFIRM}}` tokens live only in CLAUDE.md (the
+  owner's untracked contract file) — code and config are token-free.

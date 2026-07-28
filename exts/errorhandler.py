@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import math
-import traceback
 from typing import TYPE_CHECKING
 
 import discord
@@ -18,7 +17,7 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 
-class ErorrHandler(commands.Cog):
+class ErrorHandler(commands.Cog):
     def __init__(self, bot: Spork) -> None:
         self.bot = bot
 
@@ -40,8 +39,7 @@ class ErorrHandler(commands.Cog):
             else:
                 await interaction.response.send_message(message, ephemeral=True)
         else:
-            trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))
-            _logger.exception(f"Ignoring exception in command {interaction.command}:\n {trace}")
+            _logger.error(f"Ignoring exception in command {interaction.command}", exc_info=error)
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> discord.Message | None:
@@ -66,12 +64,13 @@ class ErorrHandler(commands.Cog):
             return await ctx.send(f"You're missing the required argument `{error.param.name}`")
         elif isinstance(error, NotGuildOwner):
             return await ctx.send(f"The command `{command_used}` can only be used by the server owner.")
+        elif isinstance(error, commands.NoPrivateMessage):
+            return await ctx.send(f"The command `{command_used}` can only be used in a server.")
         elif isinstance(error, commands.CheckFailure):
             return _logger.info(error)
         else:
-            trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))
-            _logger.exception(f"Ignoring exception in command {ctx.command}:\n {trace}")
+            _logger.error(f"Ignoring exception in command {ctx.command}", exc_info=error)
 
 
 async def setup(bot: Spork) -> None:
-    await bot.add_cog(ErorrHandler(bot))
+    await bot.add_cog(ErrorHandler(bot))
