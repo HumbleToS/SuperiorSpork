@@ -182,7 +182,7 @@ the bug fixes, the difference is the point.
 
 | # | Item | Value | Risk | Phase |
 |---|---|---|---|---|
-| 1 | Fix B1/B2 orphaned f-strings (ruff **B018** flags these once `B` is selected) | high-value | behavior-changing (restores intended output) | 1 |
+| 1 | Fix B1/B2 orphaned f-strings | high-value | behavior-changing (restores intended output) | 2 — *amended in Phase 1: ruff 0.16 B018 does not flag f-strings, so this is out of "fix only what ruff flags" scope and joins the other bug fixes* |
 | 2 | Fix B3 `36001` → `3600` | high-value | behavior-changing (correct ages) | 2 |
 | 3 | Fix B5 eager log-file handler (crash on clean deploy; container logs to stdout anyway) | high-value | safe | 7 |
 | 4 | Pin `discord.py>=2.7,<3` (+ pin jishaku release, asyncpg, psutil) | high-value | safe | 1 |
@@ -214,11 +214,10 @@ the bug fixes, the difference is the point.
 
 Execution order per your instruction (7 runs right after 1):
 
-- **Phase 1 — tooling & dependency floor.** Backlog 1, 4, 25. Ruff config per
-  CLAUDE.md §5 with `quote-style = "double"` (pending your confirm — see
-  HUMAN-TODO), formatter sweep as its own commit (touches 2 files), pre-commit
-  + CI (check, format-check, import smoke, `{{CONFIRM}}` scan). The B018 fix
-  (backlog 1) is user-visible and will be called out in the PR.
+- **Phase 1 — tooling & dependency floor.** Backlog 4, 25. Ruff config per
+  CLAUDE.md §5 with `quote-style = "double"`, formatter sweep as its own
+  commit, pre-commit + CI (check, format-check, import smoke, `{{CONFIRM}}`
+  scan). *(Backlog 1 moved to Phase 2 — see its row.)*
 - **Phase 7 — containerization & deploy.** Backlog 3, 5, 6, 7. Dockerfile
   (py3.13-slim, UID 10001, no voice deps — audit found no voice), compose
   Shape B, `.dockerignore`, `.env.example`, DEPLOY.md, Traefik labels with

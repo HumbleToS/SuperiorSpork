@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install ruff==0.16.0
+      - run: ruff check .
+      - run: ruff format --check .
+
+  import-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements.txt
+      - run: cp config.example.py config.py
+      - run: python -c "import bot, exts"
+
+  confirm-token-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: scan code and config for unresolved tokens
+        run: |
+          if grep -rnE --exclude-dir=.git --include='*.py' --include='*.toml' --include='*.cfg' --include='*.yml' --include='*.yaml' --include='*.sql' --include='Dockerfile*' '[{]{2}(CONFIRM|SAMPLE)' .; then
+            echo 'Unresolved tokens found in code or config. Fill in the real value first.'
+            exit 1
+          fi

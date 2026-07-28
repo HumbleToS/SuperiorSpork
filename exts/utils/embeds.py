@@ -10,8 +10,8 @@ def pastel_color() -> discord.Colour:
 
 class SporkEmbed(discord.Embed):
     def __init__(self, **kwargs: Any) -> None:
-        if kwargs.get('color', None) is None:
+        if kwargs.get('color') is None:
             kwargs['color'] = pastel_color()
-        elif kwargs.get('colour', None) is None:
+        elif kwargs.get('colour') is None:
             kwargs['colour'] = pastel_color()
         super().__init__(**kwargs)

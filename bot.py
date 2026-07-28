@@ -31,11 +31,11 @@ def setup_logging() -> None:
     rfh.setLevel(logging.DEBUG)
     rfh.setFormatter(log_fmt)
 
-    HANDLER = sh if config.TESTING else rfh
+    handler = sh if config.TESTING else rfh
 
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
-    root_logger.addHandler(HANDLER)
+    root_logger.addHandler(handler)
 
 
 _logger = logging.getLogger(__name__)
@@ -69,9 +69,8 @@ class Spork(commands.Bot):
             await self.load_extension(ext.name)
             _logger.info("Loaded %sextension: %s", "module " if ext.ispkg else "", ext.name)
 
-        with Path("./database/schema.sql").open() as file:
-            sql = file.read()
-            await self.pool.execute(sql)
+        sql = await asyncio.to_thread(Path("./database/schema.sql").read_text)
+        await self.pool.execute(sql)
 
         await self.load_extension("jishaku")
         _logger.info("Extension: jishaku loaded successfully")

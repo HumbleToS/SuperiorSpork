@@ -4,7 +4,8 @@ Format: `- [ ] <action> :: <why> :: <blocking or not>`
 
 ## Decisions needed
 
-- [ ] Confirm ruff `quote-style = "double"` :: double is the dominant style (13/15 files); `exts/utils/embeds.py` is the single-quote exception and would be normalized in the Phase 1 sweep commit; the alternative is `"preserve"` which freezes the inconsistency :: blocking Phase 1
+- [x] Confirm ruff `quote-style = "double"` :: double is the dominant style (13/15 files); `exts/utils/embeds.py` is the single-quote exception, normalized in the Phase 1 sweep commit :: decided in Phase 1 per the dominant-pattern rule (CLAUDE.md §3) after the Phase 0 recommendation went unobjected — veto and it's a one-line revert of pyproject + embeds.py
+- [ ] Decide whether jishaku should be pinned :: it still installs from unpinned git master (currently 2.7.5); discord.py is now pinned `>=2.7,<3` but a jishaku master break would still hit fresh installs; pinning to a release or commit is a one-line change :: not blocking
 - [ ] Confirm intent trim (`invites`, `reactions`, `voice_states`, `emojis`) :: nothing in the visible tree uses them, but `exts/private/` is gitignored and invisible to the audit — if a private cog uses reaction/voice/invite events, say so :: blocking the intents item in Phase 2
 - [ ] Decide the `guilds(id, prefix)` table's fate: wire per-guild prefixes through a config accessor (CLAUDE.md §14.1, recommended) or drop the table :: it's dead schema today; the accessor is the one dashboard-prep item that's expensive to retrofit later :: blocking that Phase 2 item only
 - [ ] Confirm switching `config.py` to read env vars (same names, `os.environ`-backed, `.env` + `.env.example`) :: the container deploy pattern requires `env_file`; secrets currently live as literals in the gitignored file (verified never committed) :: blocking Phase 7

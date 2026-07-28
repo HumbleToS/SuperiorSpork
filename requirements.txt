@@ -1,4 +1,4 @@
-asyncpg
-git+https://github.com/Rapptz/discord.py
+asyncpg>=0.30
+discord.py>=2.7,<3
 git+https://github.com/Gorialis/jishaku
-psutil
+psutil>=7

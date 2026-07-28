@@ -1,0 +1,15 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.0
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+  - repo: local
+    hooks:
+      - id: confirm-token-scan
+        name: unresolved CONFIRM/SAMPLE token scan
+        language: system
+        entry: bash -c 'grep -nE "[{]{2}(CONFIRM|SAMPLE)" "$@" && exit 1 || exit 0' --
+        types: [text]
+        exclude: '^(CLAUDE|AUDIT|CONVENTIONS|HUMAN-TODO|README)\.md$'

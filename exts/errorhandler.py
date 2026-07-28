@@ -42,7 +42,7 @@ class ErorrHandler(commands.Cog):
             _logger.exception(f"Ignoring exception in command {interaction.command}:\n {trace}")
 
     @commands.Cog.listener()
-    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> None | discord.Message:
+    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> discord.Message | None:
         if hasattr(ctx.command, "on_error"):
             return
 

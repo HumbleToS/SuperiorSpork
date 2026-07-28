@@ -36,7 +36,7 @@ class General(commands.Cog):
         self._current_process = psutil.Process(os.getpid())
 
     @commands.Cog.listener(name="on_message")
-    async def mention_responder(self, message: discord.Message) -> None | discord.Message:
+    async def mention_responder(self, message: discord.Message) -> discord.Message | None:
         guild = message.guild
         if not guild:
             return
