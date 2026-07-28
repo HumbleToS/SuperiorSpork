@@ -136,7 +136,7 @@ class General(commands.Cog):
         # https://github.com/DuckBot-Discord/DuckBot
         last_boost = max(guild.members, key=lambda m: m.premium_since or guild.created_at)
         if last_boost.premium_since is not None:
-            boost = f"\n{last_boost}" f"\n╰ {ts(last_boost.premium_since):R}"
+            boost = f"\n{last_boost}\n╰ {ts(last_boost.premium_since):R}"
         else:
             boost = "No active boosters"
 
