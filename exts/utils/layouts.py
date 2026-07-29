@@ -1,0 +1,25 @@
+from __future__ import annotations
+
+from typing import Any
+
+import discord
+from discord import ui
+
+from .embeds import pastel_color
+
+
+class SporkLayout(ui.LayoutView):
+    """A layout view carrying a single pastel-accented container."""
+
+    def __init__(self, *items: ui.Item[Any]) -> None:
+        super().__init__(timeout=None)
+        self.container = ui.Container(*items, accent_colour=pastel_color())
+        self.add_item(self.container)
+
+
+def graphics_gallery(*assets: discord.Asset | None) -> ui.MediaGallery | None:
+    """Builds a gallery from whichever of the given assets exist, or None."""
+    items = [discord.MediaGalleryItem(asset.url) for asset in assets if asset]
+    if not items:
+        return None
+    return ui.MediaGallery(*items)

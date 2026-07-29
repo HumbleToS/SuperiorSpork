@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import discord
 import psutil
-from discord import app_commands
+from discord import app_commands, ui
 from discord.ext import commands
 
 from config import PREFIX
@@ -18,6 +18,7 @@ from .utils.checks import is_guild_owner
 from .utils.embeds import SporkEmbed
 from .utils.emojis import Status
 from .utils.guilds import GuildGraphics
+from .utils.layouts import SporkLayout, graphics_gallery
 from .utils.time import how_old, ts
 from .utils.wording import plural
 
@@ -118,7 +119,6 @@ class General(commands.Cog):
             A user or guild member, by default None
         """
         user = user or ctx.author
-        embed = SporkEmbed()
         # Roles and format_date credit: https://github.com/Rapptz/RoboDanny
         roles = [role.name.replace("@", "@\u200b") for role in getattr(user, "roles", [])]
 
@@ -127,30 +127,36 @@ class General(commands.Cog):
                 return "N/A"
             return f"{ts(datetime):F} ({ts(datetime):R})"
 
+        items: list[ui.Item] = [
+            ui.Section(f"# {user}", accessory=ui.Thumbnail(user.display_avatar.url)),
+            ui.Separator(),
+        ]
+
         if isinstance(user, discord.Member):
             spotify = discord.utils.find(lambda activities: isinstance(activities, discord.Spotify), user.activities)
             if isinstance(spotify, discord.Spotify):
                 artists = ", ".join(spotify.artists)
-                embed.add_field(
-                    name="Spotify",
-                    value=f"Listening to [**{spotify.title}** by **{artists}**]({spotify.track_url}) on **{spotify.album}**",
-                    inline=False,
+                items.append(
+                    ui.TextDisplay(
+                        f"### Spotify"
+                        f"\nListening to [**{spotify.title}** by **{artists}**]({spotify.track_url}) on **{spotify.album}**"
+                    )
                 )
 
-        embed.set_thumbnail(url=user.display_avatar.url)
-        embed.set_author(name=user, icon_url=user.display_avatar.url)
-        embed.add_field(name="Joined", value=format_date(getattr(user, "joined_at", None)), inline=False)
-        embed.add_field(name="Registered", value=format_date(user.created_at), inline=False)
+        items.append(
+            ui.TextDisplay(
+                f"### Joined\n{format_date(getattr(user, 'joined_at', None))}"
+                f"\n### Registered\n{format_date(user.created_at)}"
+            )
+        )
 
         if roles:
-            embed.add_field(name="Roles", value=", ".join(roles) if len(roles) < 15 else f"{len(roles)} roles", inline=False)
+            items.append(ui.TextDisplay(f"### Roles\n{', '.join(roles) if len(roles) < 15 else f'{len(roles)} roles'}"))
 
-        embed.add_field(
-            name="Mutual Servers",
-            value=f"You are in `{len(user.mutual_guilds):,}` servers with the bot!",
-        )
-        embed.set_footer(text=f"User ID: {user.id} | Date: {ctx.message.created_at.strftime('%m/%d/%Y')}")
-        await ctx.send(embed=embed)
+        items.append(ui.TextDisplay(f"You are in `{len(user.mutual_guilds):,}` servers with the bot!"))
+        items.append(ui.Separator())
+        items.append(ui.TextDisplay(f"-# User ID: {user.id} | Date: {ctx.message.created_at.strftime('%m/%d/%Y')}"))
+        await ctx.send(view=SporkLayout(*items))
 
     @commands.hybrid_command()
     @commands.guild_only()
@@ -169,48 +175,51 @@ class General(commands.Cog):
         else:
             boost = "No active boosters"
 
-        embed = SporkEmbed(
-            title=guild.name,
-            description=f"{plural(member_count):member} are in this server!",
-        )
-        embed.add_field(
-            name="Info",
-            value=f"**Owner:** {guild.owner}"
-            f"\n**Role Count:** {len(guild.roles):,}"
-            f"\n**File Size limit:** {guild.filesize_limit // 1048576:,}",
-            inline=True,
-        )
-        embed.add_field(
-            name="Boosts",
-            value=f"**Level:** {guild.premium_tier} | {plural(guild.premium_subscription_count):Boost}"
-            f"\n**Booster Count:** {len(guild.premium_subscribers):,}"
-            f"\n**Last Booster:** {boost}",
-            inline=True,
-        )
-
-        embed.add_field(name="Graphics", value=GuildGraphics.from_guild(guild), inline=True)
-        embed.add_field(
-            name="Members",
-            value=f"**Total:** {plural(member_count):member} ({plural(bots):bot})\n**Member Limit:** {guild.max_members:,}",
-            inline=True,
-        )
-
         online_count = sum(m.status is discord.Status.online for m in guild.members)
         idle_count = sum(m.status is discord.Status.idle for m in guild.members)
         dnd_count = sum(m.status is discord.Status.dnd for m in guild.members)
         offline_count = sum(m.status is discord.Status.offline for m in guild.members)
 
-        embed.add_field(
-            name="Status Counts",
-            value=f"{Status.online.value} Online: {online_count:,}"
-            f"\n{Status.idle.value} Idle: {idle_count:,}"
-            f"\n{Status.dnd.value} DND: {dnd_count:,}"
-            f"\n{Status.offline.value} Offline: {offline_count:,}",
-            inline=True,
-        )
-        embed.set_thumbnail(url=guild.icon)
-        embed.set_footer(text=f"The server is {guild_age} • Guild ID: {guild.id}")
-        await ctx.send(embed=embed)
+        title = f"# {guild.name}\n{plural(member_count):member} are in this server!"
+        header = ui.Section(title, accessory=ui.Thumbnail(guild.icon.url)) if guild.icon else ui.TextDisplay(title)
+
+        items: list[ui.Item] = [
+            header,
+            ui.Separator(),
+            ui.TextDisplay(
+                f"### Info"
+                f"\n**Owner:** {guild.owner}"
+                f"\n**Role Count:** {len(guild.roles):,}"
+                f"\n**File Size limit:** {guild.filesize_limit // 1048576:,}"
+            ),
+            ui.TextDisplay(
+                f"### Boosts"
+                f"\n**Level:** {guild.premium_tier} | {plural(guild.premium_subscription_count):Boost}"
+                f"\n**Booster Count:** {len(guild.premium_subscribers):,}"
+                f"\n**Last Booster:** {boost}"
+            ),
+            ui.TextDisplay(
+                f"### Members"
+                f"\n**Total:** {plural(member_count):member} ({plural(bots):bot})"
+                f"\n**Member Limit:** {guild.max_members:,}"
+            ),
+            ui.TextDisplay(
+                f"### Status Counts"
+                f"\n{Status.online.value} Online: {online_count:,}"
+                f"\n{Status.idle.value} Idle: {idle_count:,}"
+                f"\n{Status.dnd.value} DND: {dnd_count:,}"
+                f"\n{Status.offline.value} Offline: {offline_count:,}"
+            ),
+        ]
+
+        graphics = GuildGraphics.from_guild(guild)
+        gallery = graphics_gallery(graphics.banner, graphics.splash)
+        if gallery:
+            items.append(gallery)
+
+        items.append(ui.Separator())
+        items.append(ui.TextDisplay(f"-# The server is {guild_age} • Guild ID: {guild.id}"))
+        await ctx.send(view=SporkLayout(*items))
 
     @commands.hybrid_command()
     @app_commands.allowed_installs(guilds=True, users=True)
@@ -230,7 +239,6 @@ class General(commands.Cog):
         except discord.NotFound:
             return await ctx.send("Could not get information about that invite.")
 
-        embed = SporkEmbed(title="Invite Information")
         if invite.inviter:
             user_info = (
                 f"Name and ID: {invite.inviter} `({invite.inviter.id})`\nRegistered on {ts(invite.inviter.created_at):F}"
@@ -238,53 +246,68 @@ class General(commands.Cog):
         else:
             user_info = "I could not fetch any user information, this could be due to a vanity invite."
 
-        embed.add_field(name="User Information", value=user_info, inline=True)
+        items: list[ui.Item] = []
 
         if isinstance(invite.guild, (discord.PartialInviteGuild, discord.Guild)):
             guild_age = how_old(discord.utils.utcnow() - invite.guild.created_at)
 
-            embed.description = (
-                f"Invite information about [{invite.code}]({invite.url})"
+            title = (
+                f"# Invite Information"
+                f"\nInvite information about [{invite.code}]({invite.url})"
                 f"{f' (the vanity is {invite.guild.vanity_url_code})' if invite.guild.vanity_url_code else ''}"
                 f" and has been used `{f'{invite.uses:,}' if invite.uses is not None else '0'}` times."
             )
+            header = (
+                ui.Section(title, accessory=ui.Thumbnail(invite.guild.icon.url))
+                if invite.guild.icon
+                else ui.TextDisplay(title)
+            )
+            items.extend((header, ui.Separator()))
+            items.append(ui.TextDisplay(f"### User Information\n{user_info}"))
 
             if isinstance(invite.expires_at, datetime.datetime):
-                embed.add_field(
-                    name="The Invites Demise",
-                    value=f"{ts(invite.expires_at):F} ({ts(invite.expires_at):R})",
-                    inline=False,
+                items.append(
+                    ui.TextDisplay(f"### The Invites Demise\n{ts(invite.expires_at):F} ({ts(invite.expires_at):R})")
                 )
 
-            embed.add_field(
-                name=f"{invite.guild.name} Description",
-                value=f"{invite.guild.description if invite.guild.description else 'No guild description found.'}",
-                inline=False,
+            items.append(
+                ui.TextDisplay(
+                    f"### {invite.guild.name} Description"
+                    f"\n{invite.guild.description if invite.guild.description else 'No guild description found.'}"
+                )
             )
 
-            embed.add_field(
-                name="Guild Created On",
-                value=f"{ts(invite.guild.created_at):F}\n(That's {guild_age}!)",
-                inline=True,
-            )
-
-            embed.add_field(name="Verification Level", value=f"{invite.guild.verification_level!s}".capitalize())
-            embed.add_field(name="Graphics", value=GuildGraphics.from_guild(invite.guild).to_text().replace("**", ""))
+            items.append(ui.TextDisplay(f"### Guild Created On\n{ts(invite.guild.created_at):F}\n(That's {guild_age}!)"))
+            items.append(ui.TextDisplay(f"### Verification Level\n{f'{invite.guild.verification_level!s}'.capitalize()}"))
 
             if isinstance(invite.channel, (discord.PartialInviteChannel, discord.abc.GuildChannel)):
-                embed.add_field(
-                    name="Invite Channel",
-                    value=f"[#{invite.channel}](https://discord.com/channels/{invite.guild.id}/{invite.channel.id}) `({invite.channel.id})`\nCreated on {ts(invite.channel.created_at):F}",
+                items.append(
+                    ui.TextDisplay(
+                        f"### Invite Channel"
+                        f"\n[#{invite.channel}](https://discord.com/channels/{invite.guild.id}/{invite.channel.id}) `({invite.channel.id})`"
+                        f"\nCreated on {ts(invite.channel.created_at):F}"
+                    )
                 )
 
-            embed.set_footer(text=f"{invite.guild.name} | {invite.guild.id}")
-
-            embed.add_field(
-                name="Member Counts",
-                value=f"Users Online: `{invite.approximate_presence_count:,}`\nMember Count: `{invite.approximate_member_count:,}`\nBooster Count: `{f'{invite.guild.premium_subscription_count:,}' if invite.guild.premium_subscription_count != 0 else ':('}`",
+            items.append(
+                ui.TextDisplay(
+                    f"### Member Counts"
+                    f"\nUsers Online: `{invite.approximate_presence_count:,}`"
+                    f"\nMember Count: `{invite.approximate_member_count:,}`"
+                    f"\nBooster Count: `{f'{invite.guild.premium_subscription_count:,}' if invite.guild.premium_subscription_count != 0 else ':('}`"
+                )
             )
 
-        await ctx.send(embed=embed)
+            graphics = GuildGraphics.from_guild(invite.guild)
+            gallery = graphics_gallery(graphics.banner, graphics.splash)
+            if gallery:
+                items.append(gallery)
+
+            items.extend((ui.Separator(), ui.TextDisplay(f"-# {invite.guild.name} | {invite.guild.id}")))
+        else:
+            items.append(ui.TextDisplay(f"# Invite Information\n### User Information\n{user_info}"))
+
+        await ctx.send(view=SporkLayout(*items))
 
     @commands.hybrid_command()
     async def about(self, ctx: Context) -> None:
