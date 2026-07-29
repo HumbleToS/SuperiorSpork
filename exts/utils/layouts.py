@@ -9,11 +9,11 @@ from .embeds import pastel_color
 
 
 class SporkLayout(ui.LayoutView):
-    """A layout view carrying a single pastel-accented container."""
+    """A layout view carrying a single accented container, pastel unless told otherwise."""
 
-    def __init__(self, *items: ui.Item[Any]) -> None:
+    def __init__(self, *items: ui.Item[Any], accent_colour: discord.Colour | None = None) -> None:
         super().__init__(timeout=None)
-        self.container = ui.Container(*items, accent_colour=pastel_color())
+        self.container = ui.Container(*items, accent_colour=accent_colour or pastel_color())
         self.add_item(self.container)
 
 

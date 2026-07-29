@@ -14,6 +14,7 @@ from discord.ext import commands
 
 from config import PREFIX
 
+from .utils.cache import TTLCache
 from .utils.checks import is_guild_owner
 from .utils.embeds import SporkEmbed
 from .utils.emojis import Status
@@ -37,6 +38,7 @@ class General(commands.Cog):
         self.bot = bot
         self._current_process = psutil.Process(os.getpid())
         self._current_process.cpu_percent()  # the first reading is always 0.0, prime it
+        self._profile_cache = TTLCache(ttl=900)  # banners/accents barely change; 15 minutes spares the API
 
     @commands.Cog.listener(name="on_message")
     async def mention_responder(self, message: discord.Message) -> discord.Message | None:
@@ -109,6 +111,7 @@ class General(commands.Cog):
 
     @commands.hybrid_command()
     @commands.guild_only()
+    @commands.cooldown(1, 5.0, commands.BucketType.user)
     @app_commands.describe(user="A user or guild member, defaults to you")
     async def whois(self, ctx: GuildContext, *, user: discord.Member | discord.User | None = None) -> None:
         """Shows info about a user
@@ -119,16 +122,31 @@ class General(commands.Cog):
             A user or guild member, by default None
         """
         user = user or ctx.author
+        await ctx.defer()
+        # banner and accent colour only come on a fetch
+        fetched = self._profile_cache.get(user.id)
+        if fetched is None:
+            fetched = await self.bot.fetch_user(user.id)
+            self._profile_cache.set(user.id, fetched)
         # Roles and format_date credit: https://github.com/Rapptz/RoboDanny
-        roles = [role.name.replace("@", "@\u200b") for role in getattr(user, "roles", [])]
+        roles = [role.name.replace("@", "@\u200b") for role in getattr(user, "roles", [])[:0:-1]]  # top first, no @everyone
 
         def format_date(datetime: datetime.datetime | None) -> str:
             if datetime is None:
                 return "N/A"
             return f"{ts(datetime):F} ({ts(datetime):R})"
 
+        if isinstance(user, discord.Member):
+            try:
+                status = Status[str(user.status)].value
+            except KeyError:
+                status = Status.offline.value
+            title = f"# {user.display_name}\n{status} {user}"
+        else:
+            title = f"# {user.display_name}\n{user}"
+
         items: list[ui.Item] = [
-            ui.Section(f"# {user}", accessory=ui.Thumbnail(user.display_avatar.url)),
+            ui.Section(title, accessory=ui.Thumbnail(user.display_avatar.url)),
             ui.Separator(),
         ]
 
@@ -143,29 +161,34 @@ class General(commands.Cog):
                     )
                 )
 
-        items.append(
-            ui.TextDisplay(
-                f"### Joined\n{format_date(getattr(user, 'joined_at', None))}"
-                f"\n### Registered\n{format_date(user.created_at)}"
-            )
+        dates = (
+            f"### Joined\n{format_date(getattr(user, 'joined_at', None))}\n### Registered\n{format_date(user.created_at)}"
         )
+        if isinstance(user, discord.Member) and user.premium_since is not None:
+            dates += f"\n### Boosting Since\n{format_date(user.premium_since)}"
+        items.append(ui.TextDisplay(dates))
 
         if roles:
             items.append(ui.TextDisplay(f"### Roles\n{', '.join(roles) if len(roles) < 15 else f'{len(roles)} roles'}"))
 
         items.append(ui.TextDisplay(f"You are in `{len(user.mutual_guilds):,}` servers with the bot!"))
+
+        gallery = graphics_gallery(fetched.banner)
+        if gallery:
+            items.append(gallery)
+
         items.append(ui.Separator())
-        items.append(ui.TextDisplay(f"-# User ID: {user.id} | Date: {ctx.message.created_at.strftime('%m/%d/%Y')}"))
-        await ctx.send(view=SporkLayout(*items))
+        items.append(ui.TextDisplay(f"-# User ID: {user.id}"))
+        await ctx.send(view=SporkLayout(*items, accent_colour=fetched.accent_colour))
 
     @commands.hybrid_command()
     @commands.guild_only()
+    @commands.cooldown(1, 5.0, commands.BucketType.user)
     async def serverinfo(self, ctx: GuildContext) -> None:
         """Show general info about the server"""
         guild = ctx.guild
         guild_age = how_old(discord.utils.utcnow() - guild.created_at)
         member_count = guild.member_count or len(guild.members)
-        bots = sum(member.bot for member in guild.members)
 
         # Last boost, status info, role count inspired by:
         # https://github.com/DuckBot-Discord/DuckBot
@@ -175,10 +198,18 @@ class General(commands.Cog):
         else:
             boost = "No active boosters"
 
-        online_count = sum(m.status is discord.Status.online for m in guild.members)
-        idle_count = sum(m.status is discord.Status.idle for m in guild.members)
-        dnd_count = sum(m.status is discord.Status.dnd for m in guild.members)
-        offline_count = sum(m.status is discord.Status.offline for m in guild.members)
+        # one pass over the member list instead of five; big guilds notice
+        bots = online_count = idle_count = dnd_count = offline_count = 0
+        for member in guild.members:
+            bots += member.bot
+            if member.status is discord.Status.online:
+                online_count += 1
+            elif member.status is discord.Status.idle:
+                idle_count += 1
+            elif member.status is discord.Status.dnd:
+                dnd_count += 1
+            elif member.status is discord.Status.offline:
+                offline_count += 1
 
         title = f"# {guild.name}\n{plural(member_count):member} are in this server!"
         header = ui.Section(title, accessory=ui.Thumbnail(guild.icon.url)) if guild.icon else ui.TextDisplay(title)
@@ -222,6 +253,7 @@ class General(commands.Cog):
         await ctx.send(view=SporkLayout(*items))
 
     @commands.hybrid_command()
+    @commands.cooldown(1, 5.0, commands.BucketType.user)
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @app_commands.describe(invite_code="A guilds invite or vanity")
@@ -310,6 +342,7 @@ class General(commands.Cog):
         await ctx.send(view=SporkLayout(*items))
 
     @commands.hybrid_command()
+    @commands.cooldown(1, 5.0, commands.BucketType.user)
     async def about(self, ctx: Context) -> None:
         """Shows info about the bot"""
         before_check = time.perf_counter()
