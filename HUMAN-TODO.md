@@ -4,8 +4,10 @@ Format: `- [ ] <action> :: <why> :: <blocking or not>`
 
 ## For when you're back (post-Phase-6, 2026-07-28)
 
-- [ ] Push the eight local branches and open the stacked PRs — this session has no GitHub credentials: `git push -u origin phase-0-audit phase-1-tooling phase-7-container phase-2-lifecycle phase-3-commands phase-4-ui phase-5-deprecations phase-6-hardening` :: nothing has left this machine :: blocking review
+- [ ] Push the nine local branches and open the stacked PRs — this session has no GitHub credentials: `git push -u origin phase-0-audit phase-1-tooling phase-7-container phase-2-lifecycle phase-3-commands phase-4-ui phase-5-deprecations phase-6-hardening feat-v2-info` :: nothing has left this machine :: blocking review
+- [ ] Decide: real dominant-colour extraction from banners for card accents :: needs Pillow (new runtime dependency, so your call) plus downloading each banner once; today's stand-in is a stable per-guild/per-user pastel seeded by the ID — zero API cost, zero deps :: not blocking
 - [ ] Run the owner-only `sync` command once in Discord :: Phase 2 added the hybrid `prefix` command and Phase 3 added parameter descriptions; slash metadata doesn't update until you sync :: blocking the new slash surface only
+- [ ] Try the new Components V2 looks: whois, serverinfo, inviteinfo (branch `feat-v2-info`, deployed) :: they render as pastel-accented containers now — banner/splash as real images; if anything looks off in your client, say so and I'll adjust :: your eyes needed
 - [ ] Exercise each command once in Discord (whois, serverinfo, inviteinfo with a good and a bad code, about, cleanup, prefix show/set as owner and as non-owner) :: I verified everything that can be verified without a Discord account — offline load harness, live DB round-trip, deployed startup — but nobody has clicked the commands :: blocking definition-of-done §12
 - [ ] Decide: make `about` user-installable (`allowed_installs(users=True)`) :: skipped autonomously because its `ctx.channel.typing()` latency probe can fail in user-install contexts where the bot can't type; needs a small rework first :: not blocking
 - [ ] Decide: application emojis to replace the `Status` enum's host-guild emoji :: needs the four emoji image assets and a one-time upload (manual or a startup migration); not doable without the assets :: not blocking

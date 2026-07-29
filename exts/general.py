@@ -16,7 +16,7 @@ from config import PREFIX
 
 from .utils.cache import TTLCache
 from .utils.checks import is_guild_owner
-from .utils.embeds import SporkEmbed
+from .utils.embeds import SporkEmbed, pastel_color
 from .utils.emojis import Status
 from .utils.guilds import GuildGraphics
 from .utils.layouts import SporkLayout, graphics_gallery
@@ -134,7 +134,7 @@ class General(commands.Cog):
         def format_date(datetime: datetime.datetime | None) -> str:
             if datetime is None:
                 return "N/A"
-            return f"{ts(datetime):F} ({ts(datetime):R})"
+            return f"{ts(datetime):F}\n╰ {ts(datetime):R}"
 
         # names render markdown inside a TextDisplay, so escape them
         display_name = discord.utils.escape_markdown(user.display_name)
@@ -159,20 +159,22 @@ class General(commands.Cog):
                 artists = ", ".join(spotify.artists)
                 items.append(
                     ui.TextDisplay(
-                        f"### Spotify"
+                        f"### 🎧 Spotify"
                         f"\nListening to [**{spotify.title}** by **{artists}**]({spotify.track_url}) on **{spotify.album}**"
                     )
                 )
 
-        items.append(ui.TextDisplay(f"### Joined\n{format_date(getattr(user, 'joined_at', None))}"))
-        items.append(ui.TextDisplay(f"### Registered\n{format_date(user.created_at)}"))
+        items.append(ui.TextDisplay(f"### 📥 Joined\n{format_date(getattr(user, 'joined_at', None))}"))
+        items.append(ui.TextDisplay(f"### 📆 Registered\n{format_date(user.created_at)}"))
         if isinstance(user, discord.Member) and user.premium_since is not None:
-            items.append(ui.TextDisplay(f"### Boosting Since\n{format_date(user.premium_since)}"))
+            items.append(ui.TextDisplay(f"### 💎 Boosting Since\n{format_date(user.premium_since)}"))
 
         if roles:
-            items.append(ui.TextDisplay(f"### Roles\n{', '.join(roles) if len(roles) < 15 else f'{len(roles)} roles'}"))
+            items.append(ui.TextDisplay(f"### 🎭 Roles\n{', '.join(roles) if len(roles) < 15 else f'{len(roles)} roles'}"))
 
-        items.append(ui.TextDisplay(f"### Mutual Servers\nYou are in `{len(user.mutual_guilds):,}` servers with the bot!"))
+        items.append(
+            ui.TextDisplay(f"### 🌐 Mutual Servers\nYou are in `{len(user.mutual_guilds):,}` servers with the bot!")
+        )
 
         gallery = graphics_gallery(fetched.banner)
         if gallery:
@@ -180,7 +182,7 @@ class General(commands.Cog):
 
         items.append(ui.Separator())
         items.append(ui.TextDisplay(f"-# User ID: {user.id}"))
-        await ctx.send(view=SporkLayout(*items, accent_colour=fetched.accent_colour))
+        await ctx.send(view=SporkLayout(*items, accent_colour=fetched.accent_colour or pastel_color(user.id)))
 
     @commands.hybrid_command()
     @commands.guild_only()
@@ -219,24 +221,24 @@ class General(commands.Cog):
             header,
             ui.Separator(spacing=discord.SeparatorSpacing.large),
             ui.TextDisplay(
-                f"### Info"
+                f"### ℹ️ Info"
                 f"\n**Owner:** {guild.owner}"
                 f"\n**Role Count:** {len(guild.roles):,}"
                 f"\n**File Size Limit:** {guild.filesize_limit // 1048576:,} MB"
             ),
             ui.TextDisplay(
-                f"### Boosts"
+                f"### 💎 Boosts"
                 f"\n**Level:** {guild.premium_tier} | {plural(guild.premium_subscription_count):Boost}"
                 f"\n**Booster Count:** {len(guild.premium_subscribers):,}"
                 f"\n**Last Booster:** {boost}"
             ),
             ui.TextDisplay(
-                f"### Members"
+                f"### 👥 Members"
                 f"\n**Total:** {plural(member_count):member} ({plural(bots):bot})"
                 f"\n**Member Limit:** {f'{guild.max_members:,}' if guild.max_members else 'N/A'}"
             ),
             ui.TextDisplay(
-                f"### Status Counts"
+                f"### 📊 Status Counts"
                 f"\n{Status.online.value} Online: {online_count:,}"
                 f"\n{Status.idle.value} Idle: {idle_count:,}"
                 f"\n{Status.dnd.value} DND: {dnd_count:,}"
@@ -251,7 +253,7 @@ class General(commands.Cog):
 
         items.append(ui.Separator())
         items.append(ui.TextDisplay(f"-# The server is {guild_age} • Guild ID: {guild.id}"))
-        await ctx.send(view=SporkLayout(*items))
+        await ctx.send(view=SporkLayout(*items, accent_colour=pastel_color(guild.id)))
 
     @commands.hybrid_command()
     @commands.cooldown(1, 5.0, commands.BucketType.user)
@@ -274,12 +276,13 @@ class General(commands.Cog):
 
         if invite.inviter:
             user_info = (
-                f"Name and ID: {invite.inviter} `({invite.inviter.id})`\nRegistered on {ts(invite.inviter.created_at):F}"
+                f"Name and ID: {invite.inviter} `({invite.inviter.id})`\n╰ Registered on {ts(invite.inviter.created_at):F}"
             )
         else:
             user_info = "I could not fetch any user information, this could be due to a vanity invite."
 
         items: list[ui.Item] = []
+        accent = None
 
         if isinstance(invite.guild, (discord.PartialInviteGuild, discord.Guild)):
             guild_age = how_old(discord.utils.utcnow() - invite.guild.created_at)
@@ -298,27 +301,28 @@ class General(commands.Cog):
             items.extend((header, ui.Separator(spacing=discord.SeparatorSpacing.large)))
 
             guild_name = discord.utils.escape_markdown(invite.guild.name)
-            items.append(ui.TextDisplay(f"### User Information\n{user_info}"))
+            accent = pastel_color(invite.guild.id)
+            items.append(ui.TextDisplay(f"### 👤 User Information\n{user_info}"))
 
             if isinstance(invite.expires_at, datetime.datetime):
                 items.append(
-                    ui.TextDisplay(f"### The Invites Demise\n{ts(invite.expires_at):F} ({ts(invite.expires_at):R})")
+                    ui.TextDisplay(f"### ⏳ The Invites Demise\n{ts(invite.expires_at):F}\n╰ {ts(invite.expires_at):R}")
                 )
 
             items.append(
                 ui.TextDisplay(
-                    f"### {guild_name} Description"
+                    f"### 📝 {guild_name} Description"
                     f"\n{invite.guild.description if invite.guild.description else 'No guild description found.'}"
                 )
             )
 
-            items.append(ui.TextDisplay(f"### Guild Created On\n{ts(invite.guild.created_at):F}\n(That's {guild_age}!)"))
-            items.append(ui.TextDisplay(f"### Verification Level\n{f'{invite.guild.verification_level!s}'.capitalize()}"))
+            items.append(ui.TextDisplay(f"### 📆 Guild Created On\n{ts(invite.guild.created_at):F}\n╰ That's {guild_age}!"))
+            items.append(ui.TextDisplay(f"### 🛡️ Verification Level\n{f'{invite.guild.verification_level!s}'.capitalize()}"))
 
             if isinstance(invite.channel, (discord.PartialInviteChannel, discord.abc.GuildChannel)):
                 items.append(
                     ui.TextDisplay(
-                        f"### Invite Channel"
+                        f"### 💬 Invite Channel"
                         f"\n[#{invite.channel}](https://discord.com/channels/{invite.guild.id}/{invite.channel.id}) `({invite.channel.id})`"
                         f"\n╰ Created on {ts(invite.channel.created_at):F}"
                     )
@@ -326,7 +330,7 @@ class General(commands.Cog):
 
             items.append(
                 ui.TextDisplay(
-                    f"### Member Counts"
+                    f"### 👥 Member Counts"
                     f"\nUsers Online: `{invite.approximate_presence_count:,}`"
                     f"\nMember Count: `{invite.approximate_member_count:,}`"
                     f"\nBooster Count: `{f'{invite.guild.premium_subscription_count:,}' if invite.guild.premium_subscription_count != 0 else ':('}`"
@@ -340,9 +344,9 @@ class General(commands.Cog):
 
             items.extend((ui.Separator(), ui.TextDisplay(f"-# {guild_name} | {invite.guild.id}")))
         else:
-            items.append(ui.TextDisplay(f"# Invite Information\n### User Information\n{user_info}"))
+            items.append(ui.TextDisplay(f"# Invite Information\n### 👤 User Information\n{user_info}"))
 
-        await ctx.send(view=SporkLayout(*items))
+        await ctx.send(view=SporkLayout(*items, accent_colour=accent))
 
     @commands.hybrid_command()
     @commands.cooldown(1, 5.0, commands.BucketType.user)
@@ -360,24 +364,24 @@ class General(commands.Cog):
             ),
             ui.Separator(spacing=discord.SeparatorSpacing.large),
             ui.TextDisplay(
-                f"### Bot Information"
+                f"### 🤖 Bot Information"
                 f"\nTotal Guilds: `{len(self.bot.guilds):,}`"
                 f"\nTotal Users: `{len(self.bot.users):,}`"
                 f"\nTotal Seconds Running: `{int(seconds_running):,}s`"
             ),
             ui.TextDisplay(
-                f"### Host Information"
+                f"### 🖥️ Host Information"
                 f"\nCPU Usage: `{self._current_process.cpu_percent()}%`"
                 f"\nRAM Usage: `{self._current_process.memory_percent():.2f}%`"
                 f"\nRunning on `{self._current_process.num_threads()}` threads"
             ),
             ui.TextDisplay(
-                f"### Latencies\nLatency: `{round(self.bot.latency * 1000):,}ms`\nAPI Latency: `{int(api_latency):,}ms`"
+                f"### 📡 Latencies\nLatency: `{round(self.bot.latency * 1000):,}ms`\nAPI Latency: `{int(api_latency):,}ms`"
             ),
             ui.Separator(),
             ui.TextDisplay(f"-# Made in discord.py {discord.__version__}"),
         ]
-        await ctx.send(view=SporkLayout(*items))
+        await ctx.send(view=SporkLayout(*items, accent_colour=pastel_color(self.bot.user.id)))
 
 
 async def setup(bot: Spork) -> None:
