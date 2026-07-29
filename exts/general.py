@@ -136,14 +136,17 @@ class General(commands.Cog):
                 return "N/A"
             return f"{ts(datetime):F} ({ts(datetime):R})"
 
+        # names render markdown inside a TextDisplay, so escape them
+        display_name = discord.utils.escape_markdown(user.display_name)
+        username = discord.utils.escape_markdown(str(user))
         if isinstance(user, discord.Member):
             try:
                 status = Status[str(user.status)].value
             except KeyError:
                 status = Status.offline.value
-            title = f"# {user.display_name}\n{status} {user}"
+            title = f"# {display_name}\n{status} {username}"
         else:
-            title = f"# {user.display_name}\n{user}"
+            title = f"# {display_name}" if display_name == username else f"# {display_name}\n{username}"
 
         items: list[ui.Item] = [
             ui.Section(title, accessory=ui.Thumbnail(user.display_avatar.url)),
@@ -156,20 +159,19 @@ class General(commands.Cog):
                 artists = ", ".join(spotify.artists)
                 items.append(
                     ui.TextDisplay(
-                        f"### Spotify"
-                        f"\nListening to [**{spotify.title}** by **{artists}**]({spotify.track_url}) on **{spotify.album}**"
+                        f"**Spotify:** Listening to [**{spotify.title}** by **{artists}**]({spotify.track_url}) on **{spotify.album}**"
                     )
                 )
 
         dates = (
-            f"### Joined\n{format_date(getattr(user, 'joined_at', None))}\n### Registered\n{format_date(user.created_at)}"
+            f"**Joined:** {format_date(getattr(user, 'joined_at', None))}\n**Registered:** {format_date(user.created_at)}"
         )
         if isinstance(user, discord.Member) and user.premium_since is not None:
-            dates += f"\n### Boosting Since\n{format_date(user.premium_since)}"
+            dates += f"\n**Boosting Since:** {format_date(user.premium_since)}"
         items.append(ui.TextDisplay(dates))
 
         if roles:
-            items.append(ui.TextDisplay(f"### Roles\n{', '.join(roles) if len(roles) < 15 else f'{len(roles)} roles'}"))
+            items.append(ui.TextDisplay(f"**Roles:** {', '.join(roles) if len(roles) < 15 else f'{len(roles)} roles'}"))
 
         items.append(ui.TextDisplay(f"You are in `{len(user.mutual_guilds):,}` servers with the bot!"))
 
@@ -211,32 +213,26 @@ class General(commands.Cog):
             elif member.status is discord.Status.offline:
                 offline_count += 1
 
-        title = f"# {guild.name}\n{plural(member_count):member} are in this server!"
+        title = f"# {discord.utils.escape_markdown(guild.name)}\n{plural(member_count):member} are in this server!"
         header = ui.Section(title, accessory=ui.Thumbnail(guild.icon.url)) if guild.icon else ui.TextDisplay(title)
 
         items: list[ui.Item] = [
             header,
             ui.Separator(),
             ui.TextDisplay(
-                f"### Info"
-                f"\n**Owner:** {guild.owner}"
+                f"**Owner:** {guild.owner}"
                 f"\n**Role Count:** {len(guild.roles):,}"
-                f"\n**File Size limit:** {guild.filesize_limit // 1048576:,}"
+                f"\n**File Size Limit:** {guild.filesize_limit // 1048576:,} MB"
+                f"\n**Member Limit:** {f'{guild.max_members:,}' if guild.max_members else 'N/A'}"
+                f"\n**Total:** {plural(member_count):member} ({plural(bots):bot})"
             ),
             ui.TextDisplay(
-                f"### Boosts"
-                f"\n**Level:** {guild.premium_tier} | {plural(guild.premium_subscription_count):Boost}"
+                f"**Level:** {guild.premium_tier} | {plural(guild.premium_subscription_count):Boost}"
                 f"\n**Booster Count:** {len(guild.premium_subscribers):,}"
                 f"\n**Last Booster:** {boost}"
             ),
             ui.TextDisplay(
-                f"### Members"
-                f"\n**Total:** {plural(member_count):member} ({plural(bots):bot})"
-                f"\n**Member Limit:** {guild.max_members:,}"
-            ),
-            ui.TextDisplay(
-                f"### Status Counts"
-                f"\n{Status.online.value} Online: {online_count:,}"
+                f"{Status.online.value} Online: {online_count:,}"
                 f"\n{Status.idle.value} Idle: {idle_count:,}"
                 f"\n{Status.dnd.value} DND: {dnd_count:,}"
                 f"\n{Status.offline.value} Offline: {offline_count:,}"
@@ -295,35 +291,29 @@ class General(commands.Cog):
                 else ui.TextDisplay(title)
             )
             items.extend((header, ui.Separator()))
-            items.append(ui.TextDisplay(f"### User Information\n{user_info}"))
 
+            guild_name = discord.utils.escape_markdown(invite.guild.name)
+            user_block = f"**User Information**\n{user_info}"
             if isinstance(invite.expires_at, datetime.datetime):
-                items.append(
-                    ui.TextDisplay(f"### The Invites Demise\n{ts(invite.expires_at):F} ({ts(invite.expires_at):R})")
-                )
+                user_block += f"\n\n**The Invites Demise**\n{ts(invite.expires_at):F} ({ts(invite.expires_at):R})"
+            items.append(ui.TextDisplay(user_block))
 
-            items.append(
-                ui.TextDisplay(
-                    f"### {invite.guild.name} Description"
-                    f"\n{invite.guild.description if invite.guild.description else 'No guild description found.'}"
-                )
+            details = (
+                f"**{guild_name} Description**"
+                f"\n{invite.guild.description if invite.guild.description else 'No guild description found.'}"
+                f"\n\n**Guild Created On:** {ts(invite.guild.created_at):F} (That's {guild_age}!)"
+                f"\n**Verification Level:** {f'{invite.guild.verification_level!s}'.capitalize()}"
             )
-
-            items.append(ui.TextDisplay(f"### Guild Created On\n{ts(invite.guild.created_at):F}\n(That's {guild_age}!)"))
-            items.append(ui.TextDisplay(f"### Verification Level\n{f'{invite.guild.verification_level!s}'.capitalize()}"))
-
             if isinstance(invite.channel, (discord.PartialInviteChannel, discord.abc.GuildChannel)):
-                items.append(
-                    ui.TextDisplay(
-                        f"### Invite Channel"
-                        f"\n[#{invite.channel}](https://discord.com/channels/{invite.guild.id}/{invite.channel.id}) `({invite.channel.id})`"
-                        f"\nCreated on {ts(invite.channel.created_at):F}"
-                    )
+                details += (
+                    f"\n**Invite Channel:** [#{invite.channel}](https://discord.com/channels/{invite.guild.id}/{invite.channel.id}) `({invite.channel.id})`"
+                    f"\n╰ Created on {ts(invite.channel.created_at):F}"
                 )
+            items.append(ui.TextDisplay(details))
 
             items.append(
                 ui.TextDisplay(
-                    f"### Member Counts"
+                    f"**Member Counts**"
                     f"\nUsers Online: `{invite.approximate_presence_count:,}`"
                     f"\nMember Count: `{invite.approximate_member_count:,}`"
                     f"\nBooster Count: `{f'{invite.guild.premium_subscription_count:,}' if invite.guild.premium_subscription_count != 0 else ':('}`"
@@ -335,9 +325,9 @@ class General(commands.Cog):
             if gallery:
                 items.append(gallery)
 
-            items.extend((ui.Separator(), ui.TextDisplay(f"-# {invite.guild.name} | {invite.guild.id}")))
+            items.extend((ui.Separator(), ui.TextDisplay(f"-# {guild_name} | {invite.guild.id}")))
         else:
-            items.append(ui.TextDisplay(f"# Invite Information\n### User Information\n{user_info}"))
+            items.append(ui.TextDisplay(f"# Invite Information\n**User Information**\n{user_info}"))
 
         await ctx.send(view=SporkLayout(*items))
 
@@ -350,31 +340,31 @@ class General(commands.Cog):
         after_check = time.perf_counter()
         api_latency = (after_check - before_check) * 1000
         seconds_running = (discord.utils.utcnow() - self.bot.start_time).total_seconds()
-        embed = SporkEmbed(
-            title="Statistics",
-            description=f"Running since {ts(self.bot.start_time):F}",
-        )
-        embed.add_field(
-            name="Bot Information",
-            value=f"Total Guilds: `{len(self.bot.guilds):,}`\n"
-            f"Total Users: `{len(self.bot.users):,}`\n"
-            f"Total Seconds Running: `{int(seconds_running):,}s`",
-            inline=True,
-        )
-        embed.add_field(
-            name="Host Information",
-            value=f"CPU Usage: `{self._current_process.cpu_percent()}%`\n"
-            f"RAM Usage: `{self._current_process.memory_percent():.2f}%`\n"
-            f"Running on `{self._current_process.num_threads()}` threads",
-            inline=False,
-        )
-        embed.add_field(
-            name="Latencies",
-            value=f"Latency: `{round(self.bot.latency * 1000):,}ms`\nAPI Latency: `{int(api_latency):,}ms`",
-            inline=False,
-        )
-        embed.set_footer(text=f"Made in discord.py {discord.__version__}")
-        await ctx.send(embed=embed)
+        items: list[ui.Item] = [
+            ui.Section(
+                f"# Statistics\nRunning since {ts(self.bot.start_time):F}",
+                accessory=ui.Thumbnail(self.bot.user.display_avatar.url),
+            ),
+            ui.Separator(),
+            ui.TextDisplay(
+                f"**Bot Information**"
+                f"\nTotal Guilds: `{len(self.bot.guilds):,}`"
+                f"\nTotal Users: `{len(self.bot.users):,}`"
+                f"\nTotal Seconds Running: `{int(seconds_running):,}s`"
+            ),
+            ui.TextDisplay(
+                f"**Host Information**"
+                f"\nCPU Usage: `{self._current_process.cpu_percent()}%`"
+                f"\nRAM Usage: `{self._current_process.memory_percent():.2f}%`"
+                f"\nRunning on `{self._current_process.num_threads()}` threads"
+            ),
+            ui.TextDisplay(
+                f"**Latencies**\nLatency: `{round(self.bot.latency * 1000):,}ms`\nAPI Latency: `{int(api_latency):,}ms`"
+            ),
+            ui.Separator(),
+            ui.TextDisplay(f"-# Made in discord.py {discord.__version__}"),
+        ]
+        await ctx.send(view=SporkLayout(*items))
 
 
 async def setup(bot: Spork) -> None:

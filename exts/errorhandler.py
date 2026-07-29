@@ -58,10 +58,10 @@ class ErrorHandler(commands.Cog):
             return await ctx.send(f"You can do `{command_used}` again in {plural(int(current_cooldown)):second}")
         elif isinstance(error, commands.TooManyArguments):
             return await ctx.send(f"The command `{command_used}` was used with too many arguments")
-        elif isinstance(error, commands.UserInputError):
-            return await ctx.send(f"The command `{command_used}` was used incorrectly")
         elif isinstance(error, commands.MissingRequiredArgument):
             return await ctx.send(f"You're missing the required argument `{error.param.name}`")
+        elif isinstance(error, commands.UserInputError):
+            return await ctx.send(f"The command `{command_used}` was used incorrectly")
         elif isinstance(error, NotGuildOwner):
             return await ctx.send(f"The command `{command_used}` can only be used by the server owner.")
         elif isinstance(error, commands.NoPrivateMessage):
