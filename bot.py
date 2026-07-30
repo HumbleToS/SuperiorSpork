@@ -13,6 +13,7 @@ from discord.ext import commands
 
 import config
 from exts import EXTENSIONS
+from exts.utils.sessions import SessionStore
 from exts.utils.settings import GuildSettings
 
 
@@ -63,6 +64,7 @@ class Spork(commands.Bot):
         self.pool = pool
         self.session = session
         self.settings = GuildSettings(pool)
+        self.sessions = SessionStore(pool)
 
     async def setup_hook(self) -> None:
         for ext in EXTENSIONS:
