@@ -118,6 +118,15 @@ class SessionStore:
             limit,
         )
 
+    async def journal_page(self, guild_id: int, offset: int, limit: int) -> list[asyncpg.Record]:
+        return await self.pool.fetch(
+            "SELECT * FROM voice_sessions WHERE guild_id = $1 AND status = 'done'"
+            " ORDER BY started_at ASC OFFSET $2 LIMIT $3",
+            guild_id,
+            offset,
+            limit,
+        )
+
     async def count_done(self, guild_id: int) -> int:
         return await self.pool.fetchval(
             "SELECT count(*) FROM voice_sessions WHERE guild_id = $1 AND status = 'done'", guild_id
@@ -129,7 +138,7 @@ class SessionStore:
             SELECT id, title, started_at,
                    ts_headline('english', coalesce(recap, left(transcript, 2000), ''),
                                websearch_to_tsquery('english', $2),
-                               'MaxFragments=1, MaxWords=30, MinWords=10') AS snippet
+                               'StartSel=**, StopSel=**, MaxFragments=1, MaxWords=30, MinWords=10') AS snippet
             FROM voice_sessions
             WHERE guild_id = $1 AND status = 'done' AND search @@ websearch_to_tsquery('english', $2)
             ORDER BY ts_rank(search, websearch_to_tsquery('english', $2)) DESC

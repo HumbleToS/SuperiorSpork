@@ -306,6 +306,9 @@ class Voice(commands.Cog):
     @tasks.loop(seconds=FLUSH_SECONDS)
     async def usage_flush(self) -> None:
         for guild_id, active in list(self.active.items()):
+            if not active.voice_client.is_connected():
+                await self.end_session(guild_id, "I was disconnected from the voice channel")
+                continue
             elapsed = active.elapsed
             delta = elapsed - active.flushed_seconds
             if delta <= 0:
