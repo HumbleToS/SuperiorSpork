@@ -2,9 +2,22 @@
 
 Format: `- [ ] <action> :: <why> :: <blocking or not>`
 
+## Voice recap module (feat-voice-recap, 2026-07-30)
+
+- [ ] Host the privacy policy + ToS on the bot's domain and link both in the Dev Portal app profile :: `privacy` currently links the placeholder URLs in config.py; the command ships, the pages are yours :: blocking launch
+- [ ] Legal review of the privacy policy before launch :: recording voice is the sensitive end of the Developer Policy :: blocking launch
+- [ ] Premium Apps SKU/subscription setup in the Dev Portal, then fill `SKU_TIER_1`/`SKU_TIER_2` in config.py :: `{{CONFIRM: final tier pricing and Premium Apps SKU setup}}` — until set, every server is on the Free tier (30 min/month) :: blocking monetization, not recording
+- [ ] Decide final tier pricing at price parity across any future rails :: Discord requires parity where Premium Apps is supported :: blocking launch
+- [ ] Fill `ANTHROPIC_KEY` in config.py (and optionally `REPORT_CHANNEL_ID`, real `PRIVACY_URL`/`TERMS_URL`) :: recap generation fails cleanly with retries until the key exists :: blocking the recap half of the pipeline
+- [ ] VPS resource check: whisper "small" int8 wants ~1 GB RAM while transcribing and ~0.5 GB disk in the spork-models volume :: owner-approved default; bump `WHISPER_MODEL`/`WHISPER_THREADS` in config.py only after checking free RAM :: not blocking (approved), verify before heavy use
+- [ ] First real end-to-end test: `record setup`, `record start` in a voice channel, talk, `record stop`, wait for the recap card :: capture against live Discord voice cannot be tested from this machine; DAVE/E2EE may also surface here — if receive fails on a DAVE-negotiated channel, we add the pinned `davey` dependency :: blocking sign-off
+- [ ] Run the owner `sync` command once :: nine new slash commands/groups need publishing :: blocking the slash surface
+- [x] Voice-receive dependency: pinned `discord-ext-voice-recv==0.5.2a179` (alpha) :: owner-approved 2026-07-30 with the plan; revisit when a stable cut ships :: resolved
+- [x] Install libopus/ffmpeg on the VPS image :: handled in the Dockerfile runtime stage; nothing host-side needed :: resolved
+
 ## For when you're back (post-Phase-6, 2026-07-28)
 
-- [ ] Push the nine local branches and open the stacked PRs — this session has no GitHub credentials: `git push -u origin phase-0-audit phase-1-tooling phase-7-container phase-2-lifecycle phase-3-commands phase-4-ui phase-5-deprecations phase-6-hardening feat-v2-info` :: nothing has left this machine :: blocking review
+- [ ] Push the ten local branches and open the stacked PRs — this session has no GitHub credentials: `git push -u origin phase-0-audit phase-1-tooling phase-7-container phase-2-lifecycle phase-3-commands phase-4-ui phase-5-deprecations phase-6-hardening feat-v2-info feat-voice-recap` :: nothing has left this machine :: blocking review
 - [ ] Decide: real dominant-colour extraction from banners for card accents :: needs Pillow (new runtime dependency, so your call) plus downloading each banner once; today's stand-in is a stable per-guild/per-user pastel seeded by the ID — zero API cost, zero deps :: not blocking
 - [ ] Run the owner-only `sync` command once in Discord :: Phase 2 added the hybrid `prefix` command and Phase 3 added parameter descriptions; slash metadata doesn't update until you sync :: blocking the new slash surface only
 - [ ] Try the new Components V2 looks: whois, serverinfo, inviteinfo (branch `feat-v2-info`, deployed) :: they render as pastel-accented containers now — banner/splash as real images; if anything looks off in your client, say so and I'll adjust :: your eyes needed

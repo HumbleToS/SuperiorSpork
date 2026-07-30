@@ -12,6 +12,7 @@ import psutil
 from discord import app_commands, ui
 from discord.ext import commands
 
+import config
 from config import PREFIX
 
 from .utils.cache import TTLCache
@@ -345,6 +346,56 @@ class General(commands.Cog):
             items.append(ui.TextDisplay(f"# Invite Information\n### User Information\n{user_info}"))
 
         await ctx.send(view=SporkLayout(*items, accent_colour=accent))
+
+    @commands.hybrid_command()
+    async def privacy(self, ctx: Context) -> None:
+        """What I collect, when, how long it's kept, and how to delete it"""
+        privacy_url = getattr(config, "PRIVACY_URL", "")
+        terms_url = getattr(config, "TERMS_URL", "")
+        items: list[ui.Item] = [
+            ui.TextDisplay("# Privacy"),
+            ui.Separator(spacing=discord.SeparatorSpacing.large),
+            ui.TextDisplay(
+                "### What gets collected"
+                "\nVoice audio is captured only during sessions someone explicitly starts with `record start`,"
+                " announced in chat, and only from users who acknowledged inclusion. Raw audio is deleted the"
+                " moment transcription finishes; the transcript and an AI recap are kept for the server's"
+                " retention window (90 days unless changed). Beyond that: per-server settings and prefixes."
+            ),
+            ui.TextDisplay(
+                "### How to delete"
+                "\n`optout` permanently excludes your audio in a server, `recap delete` removes a whole session,"
+                " and removing me from a server purges everything I stored for it."
+            ),
+            ui.TextDisplay(f"[Privacy Policy]({privacy_url}) • [Terms of Service]({terms_url})"),
+            ui.Separator(),
+            ui.TextDisplay("-# Something wrong? `report` reaches the owner."),
+        ]
+        await ctx.send(view=SporkLayout(*items))
+
+    @commands.hybrid_command()
+    @commands.cooldown(1, 60.0, commands.BucketType.user)
+    @app_commands.describe(message="What went wrong, or what the owner should know")
+    async def report(self, ctx: Context, *, message: str) -> None:
+        """Files a report to the bot owner
+
+        Parameters
+        ----------
+        message : str
+            What went wrong, or what the owner should know
+        """
+        destination = self.bot.get_channel(getattr(config, "REPORT_CHANNEL_ID", 0))
+        if destination is None:
+            destination = (await self.bot.application_info()).owner
+        embed = SporkEmbed(title="Report", description=message[:2000])
+        embed.set_footer(text=f"From {ctx.author} ({ctx.author.id}) in {ctx.guild or 'DMs'}")
+        try:
+            await destination.send(embed=embed)
+        except discord.HTTPException:
+            await ctx.send("I couldn't deliver that report — please try again later.")
+            return
+        _logger.info(f"Report filed by {ctx.author.id}")
+        await ctx.send("Thanks — your report is with the owner.", ephemeral=True)
 
     @commands.hybrid_command()
     @commands.cooldown(1, 5.0, commands.BucketType.user)

@@ -34,3 +34,25 @@ the `prefix` command (also mentions the bot to see the current one). Slash
 commands are published with the owner-only `sync` prefix command — run it
 once after adding or changing commands. `jishaku` is loaded for owner
 debugging.
+
+## Voice recaps
+
+Explicit-consent voice recording with AI recaps and a searchable journal —
+a paid feature metered by recorded minutes per month (Free 30 min, tiers via
+Discord Premium Apps).
+
+- `record setup` (Manage Server) picks the recorder role, recap channel, and
+  retention window; `record start` / `record stop` run a session with a
+  visible disclosure card. Recording never starts any other way.
+- Consent is per user per server and enforced at capture: audio from anyone
+  who hasn't pressed the consent button (or who used `optout`) never touches
+  disk. `optin` reverses an opt-out.
+- Raw audio is deleted the moment transcription finishes; transcripts and
+  recaps live for the retention window (default 90 days) and die with
+  `recap delete` or when the bot leaves the server.
+- `recap latest` / `recap list` / `recap search` / `journal` read the
+  archive; `minutes` shows usage and quota; `privacy` and `report` are the
+  compliance surfaces.
+- New `config.py` keys: `ANTHROPIC_KEY`, `RECAP_MODEL`, `WHISPER_MODEL`,
+  `WHISPER_THREADS`, `MODELS_DIR`, `SKU_TIER_1`, `SKU_TIER_2`,
+  `REPORT_CHANNEL_ID`, `PRIVACY_URL`, `TERMS_URL` — see `config.example.py`.

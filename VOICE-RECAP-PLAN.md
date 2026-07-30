@@ -218,12 +218,15 @@ pricing at parity · decide the voice-recv alpha pin.
   supply them); if the `ui.File` + attachment path fights us, fallback is
   the card plus a plain follow-up message carrying the transcript file.
 
-## 12. Open {{CONFIRM}} inventory (launch blockers, listed in the PR too)
+## 12. {{CONFIRM}} inventory — status after owner review (2026-07-30)
 
-1. Voice receive dependency: pin `discord-ext-voice-recv==0.5.2a179` (alpha) or hold for stable.
-2. Whisper model size vs VPS CPU/RAM budget (proposal: small/int8/2 threads).
-3. Final tier pricing + Premium Apps SKU ids (price parity across rails).
+1. ~~Voice receive dependency~~ — **owner-approved**: pinned
+   `discord-ext-voice-recv==0.5.2a179`; revisit when a stable cut ships.
+2. ~~Whisper model size~~ — **owner-approved**: small / int8 / 2 threads
+   (config-adjustable; RAM check listed in HUMAN-TODO).
+3. **OPEN — launch blocker:** `{{CONFIRM: final tier pricing and Premium
+   Apps SKU setup}}`. Until the SKU ids land in config.py, every server is
+   effectively Free tier. Tracked in HUMAN-TODO.md and the PR description.
 
-Plus one §2.7 gate that is yours regardless of tokens: **three new runtime
-dependencies** (voice-recv, PyNaCl, faster-whisper). Nothing is installed
-into requirements until you approve this plan.
+The §2.7 dependency gate (voice-recv, PyNaCl, faster-whisper) was approved
+with this plan; the pins are live in requirements.txt.
