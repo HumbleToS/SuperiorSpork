@@ -1,3 +1,6 @@
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
 [tool.ruff]
 target-version = "py311"
 line-length = 125
@@ -36,8 +39,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
+"exts/utils/capture.py" = ["SIM115"]
 "exts/utils/time.py" = ["N801"]
 "exts/utils/wording.py" = ["N801"]
+"tests/*" = ["ANN"]
 
 [tool.ruff.lint.isort]
 split-on-trailing-comma = true
