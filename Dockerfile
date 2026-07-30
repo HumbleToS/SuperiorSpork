@@ -25,13 +25,17 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH"
 
+# voice recording: opus decode + audio handling for transcription
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libopus0 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin bot
 WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
 COPY --chown=bot:bot . .
 
-RUN mkdir -p logs && chown bot:bot logs
+RUN mkdir -p logs data models && chown bot:bot logs data models
 
 USER bot
 

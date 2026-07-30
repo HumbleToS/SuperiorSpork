@@ -12,4 +12,6 @@ __pycache__
 config.py
 logs/
 data/
+tests/
+requirements-dev.txt
 *.md

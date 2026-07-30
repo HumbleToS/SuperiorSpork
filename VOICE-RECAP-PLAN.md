@@ -173,16 +173,16 @@ audio only ever touches local disk under `data/voice/<session id>/`.
 ## 8. Config additions (`config.example.py` placeholders)
 
 ```python
-_anthropic_key = "key"                  # recap generation
+_anthropic_key = "key"  # recap generation
 ANTHROPIC_KEY = ...
 RECAP_MODEL = "claude-haiku-4-5-20251001"
-WHISPER_MODEL = "small"                 # {{CONFIRM: model size vs CPU budget}}
+WHISPER_MODEL = "small"  # {{CONFIRM: model size vs CPU budget}}
 WHISPER_THREADS = 2
 MODELS_DIR = "/app/models"
-SKU_TIER_1 = 0                          # {{CONFIRM: Premium Apps SKUs}}
+SKU_TIER_1 = 0  # {{CONFIRM: Premium Apps SKUs}}
 SKU_TIER_2 = 0
 REPORT_CHANNEL_ID = 0
-PRIVACY_URL = "https://..."             # hosted page is a HUMAN-TODO
+PRIVACY_URL = "https://..."  # hosted page is a HUMAN-TODO
 TERMS_URL = "https://..."
 ```
 
