@@ -349,7 +349,7 @@ class General(commands.Cog):
 
     @commands.hybrid_command()
     async def privacy(self, ctx: Context) -> None:
-        """What I collect, when, how long it's kept, and how to delete it"""
+        """What data I collect, how long it's kept, and how to delete your data"""
         privacy_url = getattr(config, "PRIVACY_URL", "")
         terms_url = getattr(config, "TERMS_URL", "")
         items: list[ui.Item] = [
