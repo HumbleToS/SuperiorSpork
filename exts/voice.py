@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import logging
 import time
 from dataclasses import dataclass, field
@@ -11,9 +12,11 @@ from discord.ext import commands, tasks, voice_recv
 
 from .utils.capture import ConsentGateSink
 from .utils.checks import is_recorder
+from .utils.entitlements import DiscordEntitlementProvider
 from .utils.layouts import SporkLayout
 from .utils.pipeline import Pipeline
 from .utils.sessions import DEFAULT_RETENTION_DAYS
+from .utils.time import ts
 from .utils.wording import plural
 
 if TYPE_CHECKING:
@@ -83,6 +86,7 @@ class Voice(commands.Cog):
     def __init__(self, bot: Spork) -> None:
         self.bot = bot
         self.active: dict[int, ActiveSession] = {}
+        self.tiers = DiscordEntitlementProvider(bot)
 
     async def cog_load(self) -> None:
         self.bot.add_dynamic_items(ConsentButton)
@@ -117,6 +121,11 @@ class Voice(commands.Cog):
             return await ctx.send("I'm already in a voice channel here doing something else.")
 
         await ctx.defer()
+        tier = await self.tiers.tier_for(ctx.guild.id)
+        used = await self.bot.sessions.get_usage(ctx.guild.id)
+        if used >= tier.monthly_seconds:
+            return await ctx.send("This server is out of recorded minutes for the month — `minutes` has the details.")
+
         consent = await self.bot.sessions.consent_map(ctx.guild.id)
         included = {user_id for user_id, status in consent.items() if status == "consented"}
 
@@ -248,6 +257,28 @@ class Voice(commands.Cog):
 
     @commands.hybrid_command()
     @commands.guild_only()
+    async def minutes(self, ctx: GuildContext) -> None:
+        """Shows this server's recorded minutes, quota, and reset date"""
+        tier = await self.tiers.tier_for(ctx.guild.id)
+        used = await self.bot.sessions.get_usage(ctx.guild.id)
+        today = discord.utils.utcnow().date()
+        next_reset = (today.replace(day=1) + datetime.timedelta(days=32)).replace(day=1)
+        reset_at = datetime.datetime.combine(next_reset, datetime.time(tzinfo=datetime.UTC))
+        items: list[ui.Item] = [
+            ui.TextDisplay(f"# Recorded Minutes\nThis server is on the **{tier.name}** plan."),
+            ui.Separator(spacing=discord.SeparatorSpacing.large),
+            ui.TextDisplay(
+                f"### Usage"
+                f"\n`{used // 60:,}` of `{tier.monthly_seconds // 60:,}` minutes used this month"
+                f"\n╰ resets {ts(reset_at):R}"
+            ),
+            ui.Separator(),
+            ui.TextDisplay(f"-# Guild ID: {ctx.guild.id}"),
+        ]
+        await ctx.send(view=SporkLayout(*items))
+
+    @commands.hybrid_command()
+    @commands.guild_only()
     async def optout(self, ctx: GuildContext) -> None:
         """Permanently excludes your audio from recordings in this server"""
         await self.bot.sessions.set_consent(ctx.guild.id, ctx.author.id, "opted_out")
@@ -280,7 +311,11 @@ class Voice(commands.Cog):
             if delta <= 0:
                 continue
             active.flushed_seconds = elapsed
-            await self.bot.sessions.add_usage(guild_id, delta)
+            total = await self.bot.sessions.add_usage(guild_id, delta)
+            tier = await self.tiers.tier_for(guild_id)
+            if total >= tier.monthly_seconds:
+                # quota hit mid-session: stop gracefully, still process what we have
+                await self.end_session(guild_id, "the server ran out of recorded minutes for this month")
 
     @usage_flush.before_loop
     async def before_usage_flush(self) -> None:
