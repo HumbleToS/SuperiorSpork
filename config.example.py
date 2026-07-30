@@ -22,6 +22,14 @@ _anthropic_key = "key"
 _test_anthropic_key = "key"
 ANTHROPIC_KEY = _test_anthropic_key if TESTING else _anthropic_key
 
+# cloudflare workers ai (free tier) carries recaps while TESTING; anthropic in prod
+SUMMARY_PROVIDER = "cloudflare" if TESTING else "anthropic"
+_cf_ai_token = "token"
+_test_cf_ai_token = "token"
+CF_AI_TOKEN = _test_cf_ai_token if TESTING else _cf_ai_token
+CF_ACCOUNT_ID = "account-id"
+CF_AI_MODEL = "@cf/meta/llama-3.1-8b-instruct"
+
 RECAP_MODEL = "claude-haiku-4-5-20251001"
 WHISPER_MODEL = "small"
 WHISPER_THREADS = 2

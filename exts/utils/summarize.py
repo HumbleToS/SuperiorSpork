@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from aiohttp import ClientSession
 
 API_URL = "https://api.anthropic.com/v1/messages"
+CF_API_URL = "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
 CHUNK_CHARS = 16000
 FALLBACK_TITLE = "Voice Session"
 RECAP_PROMPT = (
@@ -25,11 +26,37 @@ class SummaryProvider(Protocol):
     async def summarize(self, transcript: str) -> tuple[str, str]: ...
 
 
-class AnthropicProvider:
-    """Recap generation over the anthropic messages api, through the bot's shared session."""
+class _ChunkedSummarizer:
+    """Shared summarize flow: hierarchical chunking plus title extraction; _call is per-backend."""
 
     def __init__(self, session: ClientSession) -> None:
         self.session = session
+
+    async def _call(self, prompt: str, text: str, max_tokens: int = 1200) -> str:
+        raise NotImplementedError
+
+    async def summarize(self, transcript: str) -> tuple[str, str]:
+        if len(transcript) > CHUNK_CHARS:
+            # hierarchical: summarize chunks, then recap the summaries
+            parts = [transcript[i : i + CHUNK_CHARS] for i in range(0, len(transcript), CHUNK_CHARS)]
+            partials = [await self._call(CHUNK_PROMPT, part, max_tokens=600) for part in parts]
+            transcript = "\n\n".join(partials)
+
+        raw = await self._call(RECAP_PROMPT, transcript)
+        # models decorate or preface the title line inconsistently; scan the first few lines
+        lines = raw.strip().splitlines()
+        title, recap = FALLBACK_TITLE, raw.strip()
+        for index, line in enumerate(lines[:3]):
+            cleaned = line.strip("#* ")
+            if cleaned.upper().startswith("TITLE:"):
+                title = cleaned[6:].strip(" *") or FALLBACK_TITLE
+                recap = "\n".join(lines[:index] + lines[index + 1 :]).strip()
+                break
+        return title, recap
+
+
+class AnthropicProvider(_ChunkedSummarizer):
+    """Recap generation over the anthropic messages api, through the bot's shared session."""
 
     async def _call(self, prompt: str, text: str, max_tokens: int = 1200) -> str:
         key = getattr(config, "ANTHROPIC_KEY", "")
@@ -48,17 +75,25 @@ class AnthropicProvider:
                 raise RuntimeError(f"anthropic api returned {resp.status}: {message}")
             return "".join(block["text"] for block in body["content"] if block["type"] == "text")
 
-    async def summarize(self, transcript: str) -> tuple[str, str]:
-        if len(transcript) > CHUNK_CHARS:
-            # hierarchical: summarize chunks, then recap the summaries
-            parts = [transcript[i : i + CHUNK_CHARS] for i in range(0, len(transcript), CHUNK_CHARS)]
-            partials = [await self._call(CHUNK_PROMPT, part, max_tokens=600) for part in parts]
-            transcript = "\n\n".join(partials)
 
-        raw = await self._call(RECAP_PROMPT, transcript)
-        title, _, recap = raw.partition("\n")
-        if title.upper().startswith("TITLE:"):
-            title = title[6:].strip()
-        else:
-            title, recap = FALLBACK_TITLE, raw
-        return title or FALLBACK_TITLE, recap.strip()
+class CloudflareProvider(_ChunkedSummarizer):
+    """Recap generation on cloudflare workers ai's free tier — the TESTING default."""
+
+    async def _call(self, prompt: str, text: str, max_tokens: int = 1200) -> str:
+        token = getattr(config, "CF_AI_TOKEN", "")
+        account_id = getattr(config, "CF_ACCOUNT_ID", "")
+        if not token or token == "token" or not account_id:
+            raise RuntimeError("CF_AI_TOKEN / CF_ACCOUNT_ID are not set in config.py")
+        url = CF_API_URL.format(
+            account_id=account_id, model=getattr(config, "CF_AI_MODEL", "@cf/meta/llama-3.1-8b-instruct")
+        )
+        payload = {
+            "messages": [{"role": "user", "content": f"{prompt}\n\n<transcript>\n{text}\n</transcript>"}],
+            "max_tokens": max_tokens,
+        }
+        async with self.session.post(url, json=payload, headers={"Authorization": f"Bearer {token}"}) as resp:
+            body = await resp.json()
+            if resp.status != 200 or not body.get("success", False):
+                errors = body.get("errors") or [{"message": "unknown error"}]
+                raise RuntimeError(f"workers ai returned {resp.status}: {errors[0].get('message', 'unknown error')}")
+            return body["result"]["response"]

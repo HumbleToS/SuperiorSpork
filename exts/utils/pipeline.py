@@ -7,8 +7,10 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import config
+
 from .capture import MANIFEST_NAME, align
-from .summarize import AnthropicProvider
+from .summarize import AnthropicProvider, CloudflareProvider
 from .transcribe import FasterWhisperProvider
 
 if TYPE_CHECKING:
@@ -38,7 +40,10 @@ class Pipeline:
         self.bot = bot
         self.store = bot.sessions
         self.transcriber = FasterWhisperProvider()
-        self.summarizer = AnthropicProvider(bot.session)
+        if getattr(config, "SUMMARY_PROVIDER", "anthropic") == "cloudflare":
+            self.summarizer = CloudflareProvider(bot.session)
+        else:
+            self.summarizer = AnthropicProvider(bot.session)
         # the recaps cog injects these so the pipeline stays presentation-free
         self.on_done: Callable[[asyncpg.Record, str, str, str], Awaitable[None]] | None = None
         self.on_failed: Callable[[asyncpg.Record, str], Awaitable[None]] | None = None
