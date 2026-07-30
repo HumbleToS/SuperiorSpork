@@ -8,7 +8,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from .utils.checks import NotGuildOwner
+from .utils.checks import NotGuildOwner, NotRecorder
 from .utils.wording import plural
 
 if TYPE_CHECKING:
@@ -66,6 +66,11 @@ class ErrorHandler(commands.Cog):
             return await ctx.send(f"The command `{command_used}` can only be used by the server owner.")
         elif isinstance(error, commands.NoPrivateMessage):
             return await ctx.send(f"The command `{command_used}` can only be used in a server.")
+        elif isinstance(error, NotRecorder):
+            return await ctx.send(f"The command `{command_used}` needs the recorder role, or Manage Server.")
+        elif isinstance(error, commands.MissingPermissions):
+            missing = ", ".join(error.missing_permissions)
+            return await ctx.send(f"The command `{command_used}` needs the `{missing}` permission.")
         elif isinstance(error, commands.CheckFailure):
             return _logger.info(error)
         else:

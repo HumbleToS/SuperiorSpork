@@ -55,6 +55,7 @@ class Spork(commands.Bot):
                 message_content=True,  # privileged: prefix commands and the cleanup prefix check
                 messages=True,
                 presences=True,  # privileged: spotify and status counts in whois/serverinfo
+                voice_states=True,  # voice recap recording sessions
             ),
             status=Status.dnd,
             activity=Activity(type=ActivityType.watching, name=f"my bad code | {config.PREFIX}help"),
