@@ -119,17 +119,11 @@ def warning_card(name: str, outcome: Outcome, punished: bool, guild_id: int) -> 
     else:
         title, line = HEAT_LINES.get(outcome.heat, HEAT_LINES[1])
     if outcome.kind == "escalation":
-        status = f"### Repeat list\nStrike `{outcome.escalation_level}` — the list clears after 7 clean days"
+        status = f"strike `{outcome.escalation_level}`"
     else:
-        status = f"### Heat\n{heat_bar(outcome.heat)} `{outcome.heat}/{MAX_HEAT}`"
-    items: list[ui.Item] = [
-        ui.TextDisplay(f"# {title}\n{name}, {line}"),
-        ui.Separator(spacing=discord.SeparatorSpacing.large),
-        ui.TextDisplay(status),
-        ui.Separator(),
-        ui.TextDisplay("-# Heat cools 1 point an hour • `brainrot score` shows yours"),
-    ]
-    return SporkLayout(*items, accent_colour=pastel_color(guild_id))
+        status = f"{heat_bar(outcome.heat)} `{outcome.heat}/{MAX_HEAT}`"
+    # two lines on purpose: warnings land in the middle of conversation and must not wall the chat
+    return SporkLayout(ui.TextDisplay(f"**{title}** {status}\n{name}, {line}"), accent_colour=pastel_color(guild_id))
 
 
 def modlog_card(member: discord.Member, action: str, status: str) -> SporkLayout:
