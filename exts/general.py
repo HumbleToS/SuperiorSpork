@@ -362,12 +362,16 @@ class General(commands.Cog, description="Server, user, and bot info"):
                 " moment transcription finishes; the transcript and an AI recap are kept for the server's"
                 " retention window (90 days unless changed). In servers that turn on anti-brainrot, messages in"
                 " the opted-in channels are checked against a wordlist; only heat numbers and counters are stored,"
-                " never the text. Beyond that: per-server settings and prefixes."
+                " never the text. Every server also gets activity counts — messages, joins, leaves, and commands per"
+                " day, by channel and by member — as numbers only, never text, kept for 90 days; the developer can"
+                " see them, along with server and member metadata, for support and debugging, and every such look"
+                " is logged. Beyond that: per-server settings and prefixes."
             ),
             ui.TextDisplay(
                 "### How to delete"
                 "\n`optout` permanently excludes your audio in a server, `recap delete` removes a whole session,"
-                " and removing me from a server purges everything I stored for it."
+                " `stats off` (Manage Server) stops activity counts and deletes them, `report` asks for your own"
+                " counts to be deleted, and removing me from a server purges everything I stored for it."
             ),
             ui.TextDisplay(f"[Privacy Policy]({privacy_url}) • [Terms of Service]({terms_url})"),
             ui.Separator(),

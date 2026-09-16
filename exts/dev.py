@@ -386,7 +386,7 @@ class Developer(commands.Cog, description="Owner tools"):
         self.bot = bot
         self.audit = AuditStore(bot.pool)
         self._role_counts = TTLCache(ttl=ROLE_COUNTS_TTL)
-        self._renders = TTLCache(ttl=RENDER_TTL)
+        self._renders = TTLCache(ttl=RENDER_TTL, max_size=32)  # ~250 KB a chart; a few dozen is plenty
         self._profiles = TTLCache(ttl=PROFILE_TTL)
 
     # every app command in this cog, every component, and every autocomplete answers to the same allowlist

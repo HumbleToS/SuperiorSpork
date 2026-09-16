@@ -23,9 +23,11 @@ flag picks which side is live. There is no `.env`.
 
 Three privileged intents must be enabled in the Developer Portal:
 
-- **Server Members** — member lists, join dates, mutual servers
+- **Server Members** — member lists, join dates, mutual servers, join/leave
+  counts
 - **Message Content** — prefix commands and cleanup's prefix check
-- **Presence** — spotify and status counts in whois/serverinfo
+- **Presence** — spotify and status counts in whois/serverinfo, online counts
+  in the developer tools
 
 ## Commands
 
@@ -99,3 +101,41 @@ ever stored, never message text.
 - `brainrot pardon` (Moderate Members) clears someone; `brainrot score` and
   `brainrot leaderboard` are public — the leaderboard ranks lifetime
   offenses with cooking-tier titles.
+
+## Activity counts
+
+Every server the bot is in gets activity counts: messages, joins, leaves, and
+commands per day, by channel, by hour (UTC), and by member — numbers only,
+never message text (the message event is counted, the content is never read).
+Counts accumulate in memory and are written in one batched upsert a minute
+(`STATS_FLUSH_SECONDS`) and on shutdown; nothing is written per message and
+nothing is ever backfilled from history. Daily rows live 90 days; a server's
+rows go seven days after the bot leaves it (in case the kick was a mistake),
+or immediately with `stats off` (Manage Server), which also stops collection;
+`stats on` starts fresh. The query service in `exts/utils/stats.py` returns
+plain dataclasses, so a dashboard can reuse it.
+
+## Developer tools
+
+`/dev` is a user-install-only slash group pinned to the ids in
+`DEV_OWNER_IDS` (`config.py`; empty fails closed). Once the owner has
+user-installed the bot it works in any server and in DMs; server admins never
+get it through the guild install, help never lists it, and anyone else gets a
+bare "Not available." Every use is written to `dev_audit` (and, with
+`DEV_LOG_CHANNEL_ID`, posted as one line), viewable with `/dev audit`.
+
+- `/dev server view` — a mini server viewer: overview, the channel sidebar
+  (categories, type icons, locked and age-restricted marks, voice occupancy,
+  active threads), the member sidebar grouped by hoisted role, and roles with
+  member counts. Paginated, 180 s timeout, mentions only inside the server
+  they belong to.
+- `/dev server insights` and `/dev user insights` — a snapshot card plus one
+  four-panel chart (Pillow, `assets/fonts/Inter`, rendered off the event loop
+  and cached five minutes): messages per day, joins vs leaves or activity by
+  hour, top channels, and top commands. User activity is always one server at
+  a time. Charts say "Tracking since" when history is partial.
+- `/dev purge user_id: [guild]` deletes a user's stored counts for data
+  deletion requests.
+- Every response is ephemeral with a **Share to chat** button that posts a
+  static snapshot; sharing another server's card, or a user's, asks first.
+
