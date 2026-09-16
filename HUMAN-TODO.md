@@ -2,6 +2,13 @@
 
 Format: `- [ ] <action> :: <why> :: <blocking or not>`
 
+## Help command (feat-help, 2026-09-16)
+
+- [ ] Run the owner `sync` command once after deploying :: `/help` is a new slash command; until then the prefix `help` works and slash mentions inside help fall back to plain `/name` text :: blocking the slash surface
+- [ ] Set `DASHBOARD_URL` in `config.py` when a dashboard exists :: the kickoff named `https://sprok.umbleh.dev` — likely a typo for `spork`; the line stays hidden while the key is empty :: not blocking
+- [ ] Decide: category emoji :: the kickoff wants an emoji per cog; your standing rule is custom emotes only, so every cog leaves `help_emoji` unset and nothing renders — provide emotes if you want them :: not blocking
+- [ ] Decide: prefix help mode :: shipped as `dm` (DM + 10s note + the invoking message deleted when the bot has Manage Messages), falling back to `temp` (60s post) when DMs are closed; flip `HELP_PREFIX_MODE = "temp"` in `config.py` if the DM behaviour annoys people :: not blocking
+
 ## Anti-brainrot (feat-anti-brainrot, 2026-09-16)
 
 - [ ] Add **Moderate Members** to the invite link's permission set (and **Manage Roles** if any server will use role mode) :: the feature times members out; `brainrot enable` refuses in a server until the bot has it :: blocking the feature in new servers

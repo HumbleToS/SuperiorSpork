@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 
-class General(commands.Cog):
+class General(commands.Cog, description="Server, user, and bot info"):
     def __init__(self, bot: Spork) -> None:
         self.bot = bot
         self._current_process = psutil.Process(os.getpid())

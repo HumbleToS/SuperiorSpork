@@ -99,7 +99,7 @@ def paginate(items: Sequence[Any], size: int) -> list[list[Any]]:
 
 def visible_for(index: HelpIndex, allowed: Collection[str]) -> HelpIndex:
     """Keeps only the named commands, and drops categories left empty."""
-    kept = []
+    kept: list[HelpCategory] = []
     for category in index.categories:
         entries = tuple(entry for entry in category.entries if entry.name in allowed)
         if entries:
@@ -108,7 +108,7 @@ def visible_for(index: HelpIndex, allowed: Collection[str]) -> HelpIndex:
 
 
 def landing_lines(index: HelpIndex) -> list[str]:
-    lines = []
+    lines: list[str] = []
     for category in index.categories:
         count = len(category.entries)
         tail = f" · {count} command{'' if count == 1 else 's'}"
@@ -120,7 +120,7 @@ def category_lines(category: HelpCategory, page: int) -> tuple[list[str], int, i
     """Lines for one page of a category, plus the page number (clamped) and page count."""
     pages = paginate(category.entries, PAGE_SIZE)
     page = max(0, min(page, len(pages) - 1))
-    lines = []
+    lines: list[str] = []
     for entry in pages[page]:
         # the mention markup is long but renders as just the name, so budget on what the user sees
         room = LINE_BUDGET - len(entry.shown_name) - 3
@@ -237,9 +237,11 @@ def _permission_name(flag: str) -> str:
 
 def _closure_permissions(check: object) -> list[str]:
     for cell in getattr(check, "__closure__", None) or ():
-        value = cell.cell_contents
-        if isinstance(value, dict) and value and all(key in discord.Permissions.VALID_FLAGS for key in value):
-            return [_permission_name(str(flag)) for flag, wanted in value.items() if wanted]
+        value: object = cell.cell_contents
+        if isinstance(value, dict):
+            flags = {str(flag): bool(wanted) for flag, wanted in value.items()}
+            if flags and all(flag in discord.Permissions.VALID_FLAGS for flag in flags):
+                return [_permission_name(flag) for flag, wanted in flags.items() if wanted]
     return []
 
 
@@ -315,7 +317,7 @@ def build_index(bot: commands.Bot, ids: Mapping[str, int], prefix: str) -> HelpI
             entry = build_app_entry(app_command, ids)
             grouped.setdefault(entry.category, []).append(entry)
 
-    categories = []
+    categories: list[HelpCategory] = []
     for name, entries in grouped.items():
         cog = bot.get_cog(name)
         blurb = _first_paragraph(cog.description) if cog is not None and cog.description else "Commands"

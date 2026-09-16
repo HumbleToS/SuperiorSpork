@@ -147,7 +147,7 @@ class _Slot:
     holders: int = 0
 
 
-class Brainrot(commands.Cog):
+class Brainrot(commands.Cog, description="Heat, mutes, and the leaderboard for brainrot vocabulary"):
     def __init__(self, bot: Spork) -> None:
         self.bot = bot
         self.store = BrainrotStore(bot.pool)

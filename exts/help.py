@@ -16,6 +16,7 @@ from .utils.help import (
     HelpCategory,
     HelpEntry,
     HelpIndex,
+    _first_paragraph,
     build_index,
     category_lines,
     detail_lines,
@@ -28,7 +29,7 @@ from .utils.help import (
 from .utils.layouts import SporkLayout
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from bot import Spork
 
@@ -37,6 +38,11 @@ _logger = logging.getLogger(__name__)
 VIEW_TIMEOUT = 120.0
 LANDING_PAGE = LANDING_LINES - 1  # one line is the header
 NOT_YOURS = "This isn't your help menu."
+DEFAULT_PREFIX_MODE = (
+    "dm"  # or "temp"; prefix replies can't be ephemeral, so help goes to DMs and falls back to a short-lived post
+)
+DEFAULT_DM_NOTE_SECONDS = 10
+DEFAULT_TEMP_SECONDS = 60
 
 
 class CategorySelect(ui.Select["HelpView"]):
@@ -223,14 +229,102 @@ class HelpView(SporkLayout):
             pass  # the message is gone (temp help deletes itself); nothing left to disable
 
 
+class SporkHelp(commands.HelpCommand):
+    """Prefix help: the same views as /help, sent to DMs (or posted briefly) since a prefix reply can't be ephemeral."""
+
+    def __init__(self) -> None:
+        super().__init__(command_attrs={"hidden": True, "help": "Finds a command fast, without cluttering the channel"})
+
+    @property
+    def help_cog(self) -> Help:
+        # looked up per invocation: HelpCommand deep-copies its constructor arguments and clones itself per call
+        cog = self.context.bot.get_cog("Help")
+        if not isinstance(cog, Help):
+            raise commands.CommandError("the Help cog is not loaded")
+        return cog
+
+    async def send_bot_help(self, mapping: Mapping[commands.Cog | None, list[commands.Command[Any, ..., Any]]], /) -> None:
+        await self.deliver(await self.help_cog.view_for(self.context))
+
+    async def send_cog_help(self, cog: commands.Cog, /) -> None:
+        view = await self.help_cog.view_for(self.context)
+        if view.index.category(cog.qualified_name) is None:
+            await self.send_error_message(f"There's nothing in `{cog.qualified_name}` you can use here.")
+            return
+        view.show_category(cog.qualified_name)
+        await self.deliver(view)
+
+    async def send_group_help(self, group: commands.Group[Any, ..., Any], /) -> None:
+        # a group reads like a category holding just its own subcommands
+        view = await self.help_cog.view_for(self.context)
+        head = f"{group.qualified_name} "
+        entries = tuple(entry for entry in view.index.entries if entry.name.startswith(head))
+        if not entries:
+            await self.send_error_message(f"There's nothing under `{group.qualified_name}` you can use here.")
+            return
+        blurb = _first_paragraph(group.short_doc or "Commands")
+        view.index = HelpIndex((HelpCategory(group.qualified_name, blurb, None, entries),))
+        view.show_category(group.qualified_name)
+        await self.deliver(view)
+
+    async def send_command_help(self, command: commands.Command[Any, ..., Any], /) -> None:
+        view = await self.help_cog.view_for(self.context)
+        if not view.show_entry(command.qualified_name):
+            await self.send_error_message(
+                f"I couldn't find a command called `{command.qualified_name}` that you can use here."
+            )
+            return
+        await self.deliver(view)
+
+    async def send_error_message(self, error: str, /) -> None:
+        if self.context.guild is None:
+            await self.context.send(error)
+            return
+        await self.context.send(error, delete_after=self.help_cog.seconds("HELP_DM_NOTE_SECONDS", DEFAULT_DM_NOTE_SECONDS))
+
+    async def deliver(self, view: HelpView) -> None:
+        ctx = self.context
+        if ctx.guild is None:
+            view.message = await ctx.send(view=view)  # a DM is already private
+            return
+        mode = self.help_cog.prefix_mode()
+        if mode == "dm":
+            try:
+                view.message = await ctx.author.send(view=view)
+            except discord.Forbidden:
+                mode = "temp"  # their DMs are closed; the next best thing is a post that cleans itself up
+            else:
+                note_seconds = self.help_cog.seconds("HELP_DM_NOTE_SECONDS", DEFAULT_DM_NOTE_SECONDS)
+                await ctx.send("Sent to your DMs!", delete_after=note_seconds)
+                await self._tidy(ctx)
+                return
+        temp_seconds = self.help_cog.seconds("HELP_TEMP_SECONDS", DEFAULT_TEMP_SECONDS)
+        view.message = await ctx.send(view=view, delete_after=temp_seconds)
+
+    async def _tidy(self, ctx: commands.Context[Any]) -> None:
+        channel = ctx.channel
+        if not isinstance(channel, discord.abc.GuildChannel | discord.Thread):
+            return
+        if not channel.permissions_for(channel.guild.me).manage_messages:
+            return
+        try:
+            await ctx.message.delete()
+        except discord.HTTPException:
+            pass  # already gone, or a race with another bot; nothing to clean
+
+
 class Help(commands.Cog, description="This menu, and how to find any command"):
     def __init__(self, bot: Spork) -> None:
         self.bot = bot
+        self._original_help = bot.help_command
         self._ids: dict[str, int] = {}  # root slash command name → id, from the last global sync
         self._guild_ids: dict[int, dict[str, int]] = {}  # the same for guild-scoped syncs
         self._original_sync = bot.tree.sync
 
     async def cog_load(self) -> None:
+        self._original_help = self.bot.help_command
+        self.bot.help_command = SporkHelp()
+        self.bot.help_command.cog = self
         tree = self.bot.tree
         self._original_sync = tree.sync
         tree.sync = self._sync  # mentions need ids, and the owner's sync command is where they come from
@@ -241,6 +335,14 @@ class Help(commands.Cog, description="This menu, and how to find any command"):
 
     async def cog_unload(self) -> None:
         self.bot.tree.sync = self._original_sync
+        self.bot.help_command = self._original_help
+
+    def seconds(self, key: str, default: int) -> float:
+        value = getattr(config, key, default)
+        return float(value) if isinstance(value, int | float) else float(default)
+
+    def prefix_mode(self) -> str:
+        return str(getattr(config, "HELP_PREFIX_MODE", DEFAULT_PREFIX_MODE))
 
     async def _sync(self, *, guild: discord.abc.Snowflake | None = None) -> list[app_commands.AppCommand]:
         synced = await self._original_sync(guild=guild)

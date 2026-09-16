@@ -35,6 +35,15 @@ commands are published with the owner-only `sync` prefix command — run it
 once after adding or changing commands. `jishaku` is loaded for owner
 debugging.
 
+`/help` is ephemeral and lists only what you can run where you are, with a
+category picker, paged command lists, and a detail view per command
+(`/help command:` jumps straight there; `public:` posts it for everyone,
+Manage Messages only). The prefix `help` can't be ephemeral, so it goes to
+your DMs with a short note in the channel, or posts briefly in-channel when
+your DMs are closed (`HELP_PREFIX_MODE`, `HELP_DM_NOTE_SECONDS`,
+`HELP_TEMP_SECONDS` in `config.py`). `DASHBOARD_URL`, when set, adds a
+dashboard line for Manage Server members.
+
 ## Voice recaps
 
 Explicit-consent voice recording with AI recaps and a searchable journal —

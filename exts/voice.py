@@ -82,7 +82,7 @@ class ConsentButton(ui.DynamicItem[ui.Button], template=r"spork:consent:(?P<guil
         )
 
 
-class Voice(commands.Cog):
+class Voice(commands.Cog, description="Consent-gated voice recording"):
     def __init__(self, bot: Spork) -> None:
         self.bot = bot
         self.active: dict[int, ActiveSession] = {}

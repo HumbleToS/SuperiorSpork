@@ -103,7 +103,7 @@ class SessionPager(ui.LayoutView):
         await interaction.response.edit_message(view=self)
 
 
-class Recaps(commands.Cog):
+class Recaps(commands.Cog, description="Session recaps and the journal"):
     def __init__(self, bot: Spork) -> None:
         self.bot = bot
         self.pipeline = Pipeline(bot)

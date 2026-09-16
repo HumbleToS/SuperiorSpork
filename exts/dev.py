@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from bot import Spork
 
 
-class Developer(commands.Cog):
+class Developer(commands.Cog, description="Owner tools"):
     def __init__(self, bot: Spork) -> None:
         self.bot = bot
 

@@ -1,5 +1,6 @@
 """Help: pure helpers first, then the real cogs loaded offline to check what each kind of invoker gets to see."""
 
+import asyncio
 from types import SimpleNamespace
 
 import discord
@@ -175,16 +176,38 @@ async def rig(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     cog = Help(bot)  # added directly: load_extension re-executes the module, which would split the class identity
     await bot.add_cog(cog)
 
+    calls = SimpleNamespace(sent=[], deleted=[], errors=[], dms_closed=False)
+
+    async def fake_send(self, *args, **kwargs):
+        if isinstance(self, discord.Member | discord.User) and calls.dms_closed:
+            raise discord.Forbidden(SimpleNamespace(status=403, reason="Forbidden"), "Cannot send messages to this user")
+        calls.sent.append({"to": self, "content": args[0] if args else None} | kwargs)
+        return SimpleNamespace(id=next(counter), edit=fake_edit)
+
+    async def fake_edit(**kwargs):
+        pass
+
+    async def fake_delete(self, *, delay=None):
+        calls.deleted.append(self.id)
+
+    async def on_command_error(ctx, error):
+        calls.errors.append(error)
+
+    monkeypatch.setattr(discord.abc.Messageable, "send", fake_send)
+    monkeypatch.setattr(commands.Context, "send", fake_send)
+    monkeypatch.setattr(discord.Message, "delete", fake_delete)
+    bot.add_listener(on_command_error)
+
     counter = iter(range(1000, 100000))
 
-    async def context(author_id: int, dm: bool = False) -> commands.Context:
+    async def context(author_id: int, dm: bool = False, content: str = "t,help") -> commands.Context:
         author = guild.get_member(author_id)
         assert author is not None
         data = {
             "id": str(BASE + next(counter)),
             "channel_id": str(CHANNEL_ID),
             "author": user(author.id, author.name),
-            "content": "t,help",
+            "content": content,
             "timestamp": "2026-01-01T00:00:00+00:00",
             "edited_timestamp": None,
             "tts": False,
@@ -214,8 +237,14 @@ async def rig(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         message = discord.Message(state=state, channel=channel, data=data)
         return await bot.get_context(message)
 
+    async def run(content: str, author_id: int = USER_ID, dm: bool = False) -> None:
+        ctx = await context(author_id, dm=dm, content=content)
+        await bot.invoke(ctx)
+        await asyncio.sleep(0)
+        assert calls.errors == [], calls.errors
+
     try:
-        yield SimpleNamespace(bot=bot, cog=cog, guild=guild, context=context)
+        yield SimpleNamespace(bot=bot, cog=cog, guild=guild, context=context, calls=calls, run=run)
     finally:
         await bot.close()
 
@@ -234,8 +263,7 @@ def names(index: HelpIndex) -> set[str]:
 
 async def test_owner_sees_everything_including_owner_only(rig: SimpleNamespace) -> None:
     index = await rig.cog.index_for(await rig.context(OWNER_ID))
-    # "Other" holds discord.py's stock prefix help until the next phase replaces it
-    assert [c.name for c in index.categories] == ["Brainrot", "Developer", "General", "Help", "Other"]
+    assert [c.name for c in index.categories] == ["Brainrot", "Developer", "General", "Help"]
     assert "sync" in names(index) and "brainrot config mode" in names(index) and "help" in names(index)
     assert "brainrot" not in names(index) and "brainrot config" not in names(index)  # bare groups are not listed
     assert len(index.category("Brainrot").entries) == 26
@@ -243,7 +271,7 @@ async def test_owner_sees_everything_including_owner_only(rig: SimpleNamespace) 
 
 async def test_regular_member_sees_only_what_they_can_run(rig: SimpleNamespace) -> None:
     index = await rig.cog.index_for(await rig.context(USER_ID))
-    assert [c.name for c in index.categories] == ["Brainrot", "General", "Help", "Other"]
+    assert [c.name for c in index.categories] == ["Brainrot", "General", "Help"]
     assert {e.name for e in index.category("Brainrot").entries} == {"brainrot score", "brainrot leaderboard"}
     general = {e.name for e in index.category("General").entries}
     assert "prefix" not in general  # server owner only
@@ -369,3 +397,84 @@ async def test_timeout_disables_every_component(rig: SimpleNamespace) -> None:
     await view.on_timeout()
     controls = [item for item in view.walk_children() if isinstance(item, discord.ui.Button | discord.ui.Select)]
     assert controls and all(item.disabled for item in controls) and edits == [view]
+
+
+# prefix help: the HelpCommand subclass, delivered privately as far as discord allows
+
+
+def dm_sends(rig: SimpleNamespace) -> list[dict]:
+    return [s for s in rig.calls.sent if isinstance(s["to"], discord.Member | discord.User)]
+
+
+def channel_sends(rig: SimpleNamespace) -> list[dict]:
+    return [s for s in rig.calls.sent if not isinstance(s["to"], discord.Member | discord.User)]
+
+
+async def test_stock_help_is_replaced_and_restored(rig: SimpleNamespace) -> None:
+    from exts.help import SporkHelp
+
+    assert isinstance(rig.bot.help_command, SporkHelp)
+    assert rig.bot.get_command("help").hidden is True and rig.bot.get_command("help").cog is rig.cog
+    await rig.bot.remove_cog("Help")
+    assert isinstance(rig.bot.help_command, commands.DefaultHelpCommand)
+
+
+async def test_prefix_help_goes_to_dms_with_a_short_note(rig: SimpleNamespace) -> None:
+    await rig.run("t,help")
+    dms = dm_sends(rig)
+    assert len(dms) == 1 and isinstance(dms[0]["view"], HelpView) and dms[0]["view"].message is not None
+    assert texts(dms[0]["view"])[0].startswith("**Help** · ")
+    notes = channel_sends(rig)
+    assert len(notes) == 1 and notes[0]["content"] == "Sent to your DMs!" and notes[0]["delete_after"] == 10
+    assert len(rig.calls.deleted) == 1  # the invoking message, since the bot has Manage Messages
+
+
+async def test_closed_dms_fall_back_to_a_temporary_post(rig: SimpleNamespace) -> None:
+    rig.calls.dms_closed = True
+    await rig.run("t,help")
+    assert dm_sends(rig) == []
+    posts = channel_sends(rig)
+    assert len(posts) == 1 and isinstance(posts[0]["view"], HelpView) and posts[0]["delete_after"] == 60
+    assert rig.calls.deleted == []
+
+
+async def test_temp_mode_from_config(rig: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "HELP_PREFIX_MODE", "temp", raising=False)
+    monkeypatch.setattr(config, "HELP_TEMP_SECONDS", 45, raising=False)
+    await rig.run("t,help")
+    assert dm_sends(rig) == [] and channel_sends(rig)[0]["delete_after"] == 45
+
+
+async def test_help_in_dms_is_sent_in_place(rig: SimpleNamespace) -> None:
+    await rig.run("t,help", dm=True)
+    assert len(rig.calls.sent) == 1 and "delete_after" not in rig.calls.sent[0]
+    assert "Brainrot" not in texts(rig.calls.sent[0]["view"])[0]
+
+
+async def test_help_command_category_and_group(rig: SimpleNamespace) -> None:
+    await rig.run("t,help whois")
+    assert texts(dm_sends(rig)[-1]["view"])[0].startswith("**/whois**")
+    await rig.run("t,help General")
+    assert texts(dm_sends(rig)[-1]["view"])[0].startswith("**General** · ")
+    await rig.run("t,help brainrot config", author_id=OWNER_ID)
+    page = texts(dm_sends(rig)[-1]["view"])[0]
+    assert page.startswith("**brainrot config** · 8 commands") and "/brainrot config mode" in page
+
+
+async def test_help_for_something_you_cannot_use_is_a_short_self_deleting_note(rig: SimpleNamespace) -> None:
+    await rig.run("t,help sync")  # owner only
+    assert dm_sends(rig) == []
+    note = channel_sends(rig)[-1]
+    assert "couldn't find a command called `sync`" in note["content"] and note["delete_after"] == 10
+    await rig.run("t,help brainrot config")  # nothing under it for a plain member
+    assert "nothing under `brainrot config`" in channel_sends(rig)[-1]["content"]
+    await rig.run("t,help nonsense")
+    assert "nonsense" in channel_sends(rig)[-1]["content"]
+
+
+async def test_cog_blurbs_reach_the_landing_view(rig: SimpleNamespace) -> None:
+    view = await rig.cog.view_for(await rig.context(OWNER_ID))
+    landing = texts(view)[0]
+    assert "**General** — Server, user, and bot info" in landing
+    assert "**Developer** — Owner tools" in landing
+    assert "**Help** — This menu, and how to find any command" in landing
