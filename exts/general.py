@@ -360,7 +360,9 @@ class General(commands.Cog):
                 "\nVoice audio is captured only during sessions someone explicitly starts with `record start`,"
                 " announced in chat, and only from users who acknowledged inclusion. Raw audio is deleted the"
                 " moment transcription finishes; the transcript and an AI recap are kept for the server's"
-                " retention window (90 days unless changed). Beyond that: per-server settings and prefixes."
+                " retention window (90 days unless changed). In servers that turn on anti-brainrot, messages in"
+                " the opted-in channels are checked against a wordlist; only heat numbers and counters are stored,"
+                " never the text. Beyond that: per-server settings and prefixes."
             ),
             ui.TextDisplay(
                 "### How to delete"

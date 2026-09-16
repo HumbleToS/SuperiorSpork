@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 SWEEP_SECONDS = 30
+RETRY_SECONDS = 600  # how long a failed unmute waits before the sweep tries again
 CLEANUP_TIME = datetime.time(hour=4, minute=30, tzinfo=datetime.UTC)
 SCORED_TTL = 3600  # an edit to a message older than this can be scored again; the cap keeps memory flat
 MAX_CHANNELS = 50
@@ -358,14 +359,17 @@ class Brainrot(commands.Cog):
             return False
         return True
 
-    async def lift(self, guild: discord.Guild, user_id: int, role_id: int | None, reason: str) -> None:
-        """Undoes a mute the bot applied: the remembered role, or the native timeout."""
+    async def lift(self, guild: discord.Guild, user_id: int, role_id: int | None, reason: str) -> bool:
+        """Undoes a mute the bot applied: the remembered role, or the native timeout. False means try again later."""
         member = guild.get_member(user_id)
         if member is None:
             try:
                 member = await guild.fetch_member(user_id)
-            except discord.HTTPException:
-                return  # they left; roles drop on leave and discord owns the timeout
+            except discord.NotFound:
+                return True  # they left; roles drop on leave and discord owns the timeout
+            except discord.HTTPException as exc:
+                _logger.warning(f"could not look up {user_id} in {guild.id} to lift an anti-brainrot mute", exc_info=exc)
+                return False
         try:
             if role_id is not None:
                 role = guild.get_role(role_id)
@@ -375,6 +379,8 @@ class Brainrot(commands.Cog):
                 await member.timeout(None, reason=reason)
         except discord.HTTPException as exc:
             _logger.warning(f"could not lift an anti-brainrot mute for {user_id} in {guild.id}", exc_info=exc)
+            return False
+        return True
 
     async def modlog(self, config: BrainrotConfig, member: discord.Member, action: str, status: str) -> None:
         if config.modlog_channel_id is None:
@@ -415,8 +421,13 @@ class Brainrot(commands.Cog):
     async def expire_mutes(self) -> None:
         for row in await self.store.expired_role_mutes():
             guild = self.bot.get_guild(row["guild_id"])
-            if guild is not None:
-                await self.lift(guild, row["user_id"], row["muted_role_id"], "Anti-brainrot: mute expired")
+            if guild is not None and not await self.lift(
+                guild, row["user_id"], row["muted_role_id"], "Anti-brainrot: mute expired"
+            ):
+                # keep the record and come back later, so a lost permission never leaves someone muted for good
+                retry_at = discord.utils.utcnow() + datetime.timedelta(seconds=RETRY_SECONDS)
+                await self.store.set_mute(row["guild_id"], row["user_id"], retry_at, row["muted_role_id"])
+                continue
             await self.store.clear_mute(row["guild_id"], row["user_id"])
 
     @expire_mutes.before_loop
@@ -517,6 +528,37 @@ class Brainrot(commands.Cog):
         """Turns anti-brainrot off; settings and the leaderboard are kept"""
         await self.store.set_config(ctx.guild.id, "enabled", False)
         await ctx.send("Anti-brainrot is off. Everything is kept, `brainrot enable` brings it back.", ephemeral=True)
+
+    @brainrot.command()
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    async def prune(self, ctx: GuildContext) -> None:
+        """Forgets watched channels, exempt roles, and exempt members that no longer exist"""
+        guild = ctx.guild
+        config = await self.store.get_config(guild.id)
+        # the add/remove commands resolve real objects, so deleted ones can only be dropped here
+        channels = [cid for cid in config.channel_ids if guild.get_channel_or_thread(cid) is not None]
+        roles = [rid for rid in config.exempt_role_ids if guild.get_role(rid) is not None]
+        users = [uid for uid in config.exempt_user_ids if guild.get_member(uid) is not None]
+        dropped = (
+            len(config.channel_ids)
+            - len(channels)
+            + len(config.exempt_role_ids)
+            - len(roles)
+            + len(config.exempt_user_ids)
+            - len(users)
+        )
+        if not dropped:
+            await ctx.send("Nothing to prune — everything still exists.", ephemeral=True)
+            return
+        for column, kept, before in (
+            ("channel_ids", channels, config.channel_ids),
+            ("exempt_role_ids", roles, config.exempt_role_ids),
+            ("exempt_user_ids", users, config.exempt_user_ids),
+        ):
+            if len(kept) != len(before):
+                await self.store.set_config(guild.id, column, kept)
+        await ctx.send(f"Pruned {plural(dropped):entry|entries} that no longer exist.", ephemeral=True)
 
     # channels
 

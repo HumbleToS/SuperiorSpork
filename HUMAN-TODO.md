@@ -2,6 +2,17 @@
 
 Format: `- [ ] <action> :: <why> :: <blocking or not>`
 
+## Anti-brainrot (feat-anti-brainrot, 2026-09-16)
+
+- [ ] Add **Moderate Members** to the invite link's permission set (and **Manage Roles** if any server will use role mode) :: the feature times members out; `brainrot enable` refuses in a server until the bot has it :: blocking the feature in new servers
+- [ ] Confirm the **Message Content** privileged intent stays enabled in the Developer Portal :: already on for prefix commands; anti-brainrot reads message text in opted-in channels, and without it nothing is ever scored :: blocking
+- [ ] Privacy policy: add a section saying that in servers where anti-brainrot is enabled, messages in opted-in channels are checked against a wordlist, and only per-user heat numbers, counters, and timestamps are stored (never text, not even in logs); everything is deleted when the bot leaves the server :: the in-bot `privacy` command already says this; the hosted policy must match :: blocking launch, alongside the existing policy item
+- [ ] Deploy: `docker compose up -d --build bot` :: the running container is still on the voice-recap tip; startup applies the two new tables idempotently :: blocking use
+- [ ] Run the owner `sync` command once after deploying :: one new slash group (`/brainrot`, 26 subcommands); `record setup`'s `retention_days` also changed type (integer again) :: blocking the slash surface
+- [ ] First live pass in a test server: `brainrot enable` (expect a permission report if something is missing), `channels add`, say something dumb, watch the warning land and auto-delete, reach 5 for a timeout, `pardon`, `score`, `leaderboard` :: the offline harness proves the wiring on real discord.py objects, but nobody has seen the cards render in a client :: blocking sign-off
+- [ ] Skim `DEFAULT_TERMS` in `exts/utils/heat.py` every few months :: slang rots; it's a plain tuple with a comment on top :: not blocking
+- [ ] Decide: add a type checker (`[tool.pyright]` + a CI step) :: none is configured; pyright basic is clean on the three new modules and strict on the engine, so adopting it now is cheap; config change outside the feature's scope :: not blocking
+
 ## Voice recap module (feat-voice-recap, 2026-07-30)
 
 - [ ] Host the privacy policy + ToS on the bot's domain and link both in the Dev Portal app profile :: `privacy` currently links the placeholder URLs in config.py; the command ships, the pages are yours :: blocking launch

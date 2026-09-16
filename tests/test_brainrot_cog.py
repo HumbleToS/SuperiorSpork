@@ -726,3 +726,94 @@ def test_tier_titles() -> None:
     assert tier_title(5) == "Medium"
     assert tier_title(99) == "Burnt"
     assert tier_title(1000) == "Charcoal"
+
+
+# hardening: things discord does mid-session
+
+
+def forbidden() -> discord.Forbidden:
+    return discord.Forbidden(SimpleNamespace(status=403, reason="Forbidden"), "Missing Permissions")
+
+
+async def test_a_failed_warning_send_never_raises_or_loses_heat(
+    rig: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def broken_reply(self, *args, **kwargs):
+        raise forbidden()
+
+    monkeypatch.setattr(discord.Message, "reply", broken_reply)
+    await rig.cog.inspect(rig.message("rizz"))
+    assert state_of(rig).heat == 1 and rig.calls.sent == []
+
+
+async def test_owner_opted_in_gets_heat_but_is_never_punished(rig: SimpleNamespace) -> None:
+    rig.store.config = replace(rig.store.config, include_mods=True)
+    rig.store.states[(GUILD_ID, OWNER_ID)] = HeatState(heat=4, heat_updated_at=discord.utils.utcnow())
+    await rig.cog.inspect(rig.message("rizz", author_id=OWNER_ID))
+    assert rig.calls.timeouts == [] and len(rig.calls.sent) == 1
+    assert state_of(rig, OWNER_ID).heat == 0 and state_of(rig, OWNER_ID).repeat_until is not None
+
+
+async def test_member_gone_by_the_time_a_role_mute_expires(rig: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def not_found(self, member_id, /):
+        raise discord.NotFound(SimpleNamespace(status=404, reason="Not Found"), "Unknown Member")
+
+    monkeypatch.setattr(discord.Guild, "fetch_member", not_found)
+    rig.guild._remove_member(rig.guild.get_member(USER_ID))
+    rig.store.mutes[(GUILD_ID, USER_ID)] = (discord.utils.utcnow() - datetime.timedelta(seconds=1), MUTE_ROLE_ID)
+    await rig.cog.expire_mutes()
+    assert rig.calls.roles == [] and (GUILD_ID, USER_ID) not in rig.store.mutes
+
+
+async def test_a_failed_unmute_is_kept_and_retried_later(rig: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def broken_remove(self, *roles, reason=None, atomic=True):
+        raise forbidden()
+
+    monkeypatch.setattr(discord.Member, "remove_roles", broken_remove)
+    rig.guild.get_member(USER_ID)._roles.add(MUTE_ROLE_ID)
+    rig.store.mutes[(GUILD_ID, USER_ID)] = (discord.utils.utcnow() - datetime.timedelta(seconds=1), MUTE_ROLE_ID)
+    await rig.cog.expire_mutes()
+    expires, role_id = rig.store.mutes[(GUILD_ID, USER_ID)]
+    assert role_id == MUTE_ROLE_ID and 590 <= (expires - discord.utils.utcnow()).total_seconds() <= 600
+
+
+async def test_role_mute_outlives_a_config_change(rig: SimpleNamespace) -> None:
+    rig.store.config = replace(rig.store.config, mute_mode="role", mute_role_id=MUTE_ROLE_ID)
+    rig.store.states[(GUILD_ID, USER_ID)] = HeatState(heat=4, heat_updated_at=discord.utils.utcnow())
+    await rig.cog.inspect(rig.message("rizz"))
+    assert rig.calls.roles == [("add", USER_ID, MUTE_ROLE_ID)]
+
+    rig.store.config = replace(
+        rig.store.config, enabled=False, mute_mode="timeout", mute_role_id=None
+    )  # admin changed their mind
+    rig.store.mutes[(GUILD_ID, USER_ID)] = (discord.utils.utcnow() - datetime.timedelta(seconds=1), MUTE_ROLE_ID)
+    await rig.cog.expire_mutes()
+    assert rig.calls.roles[-1] == ("remove", USER_ID, MUTE_ROLE_ID) and (GUILD_ID, USER_ID) not in rig.store.mutes
+
+
+async def test_missing_mod_log_channel_is_logged_not_raised(rig: SimpleNamespace) -> None:
+    rig.store.config = replace(rig.store.config, modlog_channel_id=BASE + 4040)
+    rig.store.states[(GUILD_ID, USER_ID)] = HeatState(heat=4, heat_updated_at=discord.utils.utcnow())
+    await rig.cog.inspect(rig.message("rizz"))
+    assert len(rig.calls.timeouts) == 1 and len(rig.calls.sent) == 1  # the warning went out, the mod log was skipped
+
+
+async def test_prune_forgets_deleted_channels_roles_and_members(rig: SimpleNamespace) -> None:
+    rig.store.config = replace(
+        rig.store.config,
+        channel_ids=frozenset({CHANNEL_ID, BASE + 4040}),
+        exempt_role_ids=frozenset({EXEMPT_ROLE_ID, BASE + 4041}),
+        exempt_user_ids=frozenset({USER_ID, GONE_ID}),
+    )
+    reply = await rig.run("t,brainrot prune")
+    assert reply == "Pruned 3 entries that no longer exist."
+    assert rig.store.config.channel_ids == {CHANNEL_ID}
+    assert rig.store.config.exempt_role_ids == {EXEMPT_ROLE_ID} and rig.store.config.exempt_user_ids == {USER_ID}
+    reply = await rig.run("t,brainrot prune")
+    assert reply is not None and reply.startswith("Nothing to prune")
+
+
+async def test_deleted_channel_shows_up_in_readiness(rig: SimpleNamespace) -> None:
+    rig.store.config = replace(rig.store.config, enabled=False, channel_ids=frozenset({CHANNEL_ID, BASE + 4040}))
+    reply = await rig.run("t,brainrot enable")
+    assert reply is not None and f"<#{BASE + 4040}> no longer exists" in reply and rig.store.config.enabled is False

@@ -56,3 +56,26 @@ Discord Premium Apps).
 - New `config.py` keys: `ANTHROPIC_KEY`, `RECAP_MODEL`, `WHISPER_MODEL`,
   `WHISPER_THREADS`, `MODELS_DIR`, `SKU_TIER_1`, `SKU_TIER_2`,
   `REPORT_CHANNEL_ID`, `PRIVACY_URL`, `TERMS_URL` — see `config.example.py`.
+
+## Anti-brainrot
+
+An opt-in, per-server heat system for brainrot vocabulary (skibidi, gyatt,
+rizz, and friends). Detection is a wordlist, so it costs nothing to run and
+is free for every server; only heat numbers, counters, and timestamps are
+ever stored, never message text.
+
+- Off by default. `brainrot enable` (Manage Server) checks the bot has what
+  it needs and says exactly what's missing; `brainrot channels add` opts
+  channels in one at a time (threads and forum posts follow their parent).
+- Every offending message is +1 heat with a warning that never pings and
+  auto-deletes; three in 30 seconds (or one stuffed message) is spam worth
+  +3; heat 5 is a 5-minute timeout (or a muted role, `brainrot config
+  mode`), after which the user is a repeat offender for 7 days and the next
+  offenses climb 30m → 2h → 24h. Heat cools 1 point an hour.
+- Mods are exempt by default (`brainrot config mods` opts them in), plus
+  per-role and per-user `brainrot exempt`. `brainrot terms` and
+  `brainrot allow` tune the vocabulary per server; `brainrot config` has the
+  rest (durations, ladder, warning lifetime, deleting messages, mod log).
+- `brainrot pardon` (Moderate Members) clears someone; `brainrot score` and
+  `brainrot leaderboard` are public — the leaderboard ranks lifetime
+  offenses with cooking-tier titles.
