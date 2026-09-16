@@ -39,14 +39,14 @@ SKU_TIER_1 = 0  # set after Premium Apps SKU setup — CONFIRM token tracked in 
 SKU_TIER_2 = 0
 
 REPORT_CHANNEL_ID = 0
-PRIVACY_URL = "https://example.com/privacy"  # hosted policy is a HUMAN-TODO
-TERMS_URL = "https://example.com/terms"
+PRIVACY_URL = "https://privacy.sprok.umbleh.dev"
+TERMS_URL = "https://terms.sprok.umbleh.dev"
 
 # help: prefix help can't be ephemeral, so it goes to DMs ("dm") or a self-deleting post ("temp")
 HELP_PREFIX_MODE = "dm"
 HELP_DM_NOTE_SECONDS = 10  # the "Sent to your DMs!" note
 HELP_TEMP_SECONDS = 60  # in-channel help, when DMs are closed or the mode is "temp"
-DASHBOARD_URL = ""  # shown in help to Manage Server members once a dashboard exists; empty hides it
+DASHBOARD_URL = "https://sprok.umbleh.dev"  # shown in help to Manage Server members; empty hides it
 
 # internal api for the dashboard: aiohttp on the private spork-internal network only; an empty token keeps it off
 _api_token = "token"
