@@ -43,3 +43,41 @@ CREATE TABLE IF NOT EXISTS voice_usage (
     seconds_used integer NOT NULL DEFAULT 0,
     PRIMARY KEY (guild_id, month)
 );
+
+CREATE TABLE IF NOT EXISTS brainrot_guilds (
+    guild_id bigint PRIMARY KEY,
+    enabled boolean NOT NULL DEFAULT false,
+    channel_ids bigint[] NOT NULL DEFAULT '{}',
+    added_terms text[] NOT NULL DEFAULT '{}',
+    removed_terms text[] NOT NULL DEFAULT '{}',
+    allowed_terms text[] NOT NULL DEFAULT '{}',
+    exempt_role_ids bigint[] NOT NULL DEFAULT '{}',
+    exempt_user_ids bigint[] NOT NULL DEFAULT '{}',
+    mute_mode text NOT NULL DEFAULT 'timeout',
+    mute_role_id bigint,
+    mute_seconds integer NOT NULL DEFAULT 300,
+    ladder_seconds integer[] NOT NULL DEFAULT '{1800,7200,86400}',
+    warn_delete_seconds integer NOT NULL DEFAULT 30,
+    delete_messages boolean NOT NULL DEFAULT false,
+    include_mods boolean NOT NULL DEFAULT false,
+    modlog_channel_id bigint
+);
+
+-- heat numbers, counters, and timestamps only; never message content
+CREATE TABLE IF NOT EXISTS brainrot_users (
+    guild_id bigint NOT NULL,
+    user_id bigint NOT NULL,
+    heat integer NOT NULL DEFAULT 0,
+    heat_updated_at timestamptz NOT NULL,
+    window_started_at timestamptz,
+    window_count integer NOT NULL DEFAULT 0,
+    lifetime_offenses integer NOT NULL DEFAULT 0,
+    repeat_until timestamptz,
+    escalation_level integer NOT NULL DEFAULT 0,
+    mute_expires_at timestamptz,
+    muted_role_id bigint,
+    PRIMARY KEY (guild_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS brainrot_users_lifetime_idx ON brainrot_users (guild_id, lifetime_offenses DESC);
+CREATE INDEX IF NOT EXISTS brainrot_users_mute_idx ON brainrot_users (mute_expires_at) WHERE muted_role_id IS NOT NULL;
