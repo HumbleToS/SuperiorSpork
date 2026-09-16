@@ -1,6 +1,7 @@
 """Developer tools: the allowlist and pure viewer builders first, then the audit store against Postgres, then the
 /dev cog driven offline on a real guild payload with fake interactions. Every path a non-owner could take is here."""
 
+import datetime
 import logging
 from types import SimpleNamespace
 
@@ -12,9 +13,10 @@ from discord.ext import commands
 from test_brainrot_cog import BASE, BOT_ID, NOW, user
 
 import config
-from exts.dev import ConfirmShareView, Developer, ServerView, ShareButton, TextView
+from exts.dev import ConfirmShareView, Developer, InsightsView, ServerView, ShareButton, TextView
 from exts.errorhandler import ErrorHandler
 from exts.stats import Stats
+from exts.utils.charts import Chart
 from exts.utils.devtools import (
     MEMBERS_PER_GROUP,
     THREADS_PER_CHANNEL,
@@ -37,6 +39,16 @@ from exts.utils.devtools import (
     tally_members,
 )
 from exts.utils.help import build_index
+from exts.utils.stats import (
+    ChannelCount,
+    CommandCount,
+    DayCount,
+    GuildActivity,
+    HourCount,
+    JoinLeave,
+    MemberActivity,
+    MemberRank,
+)
 
 GUILD_ID = BASE + 500
 OTHER_GUILD_ID = BASE + 501
@@ -410,8 +422,9 @@ class FakeInteraction:
         self.followup = SimpleNamespace(send=self._followup)
         self.command = None
 
-    async def _followup(self, content=None, *, view=None, files=(), ephemeral=False, allowed_mentions=None):
-        self.calls.append(("followup", content, view, list(files), ephemeral))
+    async def _followup(self, content=None, *, view=None, files=(), ephemeral=False, allowed_mentions=None, wait=False):
+        sent = [] if files is discord.utils.MISSING else list(files)
+        self.calls.append(("followup", content, view, sent, ephemeral))
 
     async def edit_original_response(self, *, view=None):
         self.calls.append(("edit_original", None, view, [], True))
@@ -786,3 +799,223 @@ async def test_dev_log_channel_gets_one_line(rig: SimpleNamespace, monkeypatch: 
         == f"`dev server view` · by `{OWNER_ID}` · guild `{GUILD_ID}` · shared to `{GENERAL}`"
     )
     assert posted[0]["allowed_mentions"].everyone is False
+
+
+# insights: the commands over a fake stats store and a stubbed renderer
+
+
+def guild_activity_for(guild_id: int, span, *, tracking_since=None):
+    return GuildActivity(
+        guild_id=guild_id,
+        span=span,
+        tracking_since=tracking_since,
+        messages=tuple(DayCount(day, 5) for day in span),
+        active_users=tuple(DayCount(day, 2) for day in span),
+        joins_leaves=tuple(JoinLeave(day, 1, 0) for day in span),
+        hours=tuple(HourCount(hour, hour) for hour in range(24)),
+        top_channels=(ChannelCount(GENERAL, 90), ChannelCount(BASE + 9999, 1)),
+    )
+
+
+class FakeInsightsStore(FakeStatsStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.tracking: dict[int, datetime.datetime | None] = {}
+        self.calls: list[tuple] = []
+
+    async def guild_activity(self, guild_id: int, span) -> GuildActivity:
+        self.calls.append(("guild", guild_id, span.days))
+        return guild_activity_for(guild_id, span, tracking_since=self.tracking.get(guild_id))
+
+    async def member_activity(self, guild_id: int, user_id: int, span) -> MemberActivity:
+        self.calls.append(("member", guild_id, user_id, span.days))
+        rank = MemberRank(rank=1, ranked=4, messages=12) if user_id == MOD_ID else None
+        return MemberActivity(
+            guild_id=guild_id,
+            user_id=user_id,
+            span=span,
+            tracking_since=self.tracking.get(guild_id),
+            messages=tuple(DayCount(day, 1) for day in span),
+            hours=tuple(HourCount(hour, 0) for hour in range(24)),
+            top_channels=(ChannelCount(GENERAL, 12),),
+            top_commands=(CommandCount("help", 3),),
+            rank=rank,
+        )
+
+
+@pytest.fixture
+async def insights(rig: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    store = FakeInsightsStore()
+    rig.stats.store = store
+    renders: list[Chart] = []
+
+    def fake_render(chart: Chart) -> bytes:
+        renders.append(chart)
+        return b"png-bytes"
+
+    monkeypatch.setattr("exts.dev.render_chart", fake_render)
+    fetched: list[int] = []
+
+    async def fetch_user(user_id: int) -> discord.User:
+        fetched.append(user_id)
+        if user_id == GONE_ID:
+            raise discord.NotFound(
+                SimpleNamespace(status=404, reason="Not Found"), {"message": "Unknown User", "code": 10013}
+            )
+        return discord.User(
+            state=rig.bot._connection, data=user(user_id, f"user{user_id}") | {"banner": None, "accent_color": 0x123456}
+        )
+
+    monkeypatch.setattr(rig.bot, "fetch_user", fetch_user)
+    return SimpleNamespace(rig=rig, store=store, renders=renders, fetched=fetched)
+
+
+GONE_ID = BASE + 4242
+
+
+def gallery_urls(view: ui.LayoutView) -> list[str]:
+    return [
+        item.media.url for gallery in view.walk_children() if isinstance(gallery, ui.MediaGallery) for item in gallery.items
+    ]
+
+
+async def test_server_insights_card_chart_and_cache(insights: SimpleNamespace) -> None:
+    rig = insights.rig
+    insights.store.tracking[GUILD_ID] = discord.utils.utcnow() - datetime.timedelta(days=3)
+    interaction = FakeInteraction(OWNER_ID)
+    await rig.command("dev server insights").callback(rig.cog, interaction, None, "7d")
+
+    assert interaction.calls[0][0] == "defer" and interaction.calls[0][4] is True
+    kind, _, view, files, ephemeral = interaction.calls[1]
+    assert kind == "followup" and ephemeral and isinstance(view, InsightsView) and view.interaction is interaction
+    assert [file.filename for file in files] == ["insights.png"] and files[0].fp.read() == b"png-bytes"
+    assert gallery_urls(view) == ["attachment://insights.png"]
+    text = card_text(view)
+    assert text.startswith("# Spork Lab\n`") and "### Members" in text and "### Last 7 days" in text
+    assert "**Messages:** `35`" in text and "**Joined:** `7` · **Left:** `0`" in text and "**Busiest day:** <t:" in text
+    assert "**Tracking since <t:" in text and text.endswith(f"-# 7d • Guild ID: {GUILD_ID}")
+    assert insights.store.calls == [("guild", GUILD_ID, 7)]
+    assert rig.cog.audit.rows[-1]["command"] == "dev server insights"
+
+    chart = insights.renders[0]
+    assert chart.panels[1].title == "Joins vs leaves" and chart.panels[2].bars[0] == ("#general", 90)
+    assert chart.panels[2].bars[1][0] == "deleted …9999"
+    assert chart.panels[0].note is not None and chart.panels[0].note.startswith("Tracking since")
+
+    again = FakeInteraction(OWNER_ID)
+    await rig.command("dev server insights").callback(rig.cog, again, None, "7d")
+    assert len(insights.renders) == 1  # the five-minute render cache
+    await rig.command("dev server insights").callback(rig.cog, FakeInteraction(OWNER_ID), None, "30d")
+    assert len(insights.renders) == 2 and insights.renders[1].panels[0].days[0] != insights.renders[0].panels[0].days[0]
+
+    # a fresh upload every time it is shared, from the same bytes
+    snapshot = view.snapshot("jaden")
+    assert gallery_urls(snapshot) == ["attachment://insights.png"] and buttons(snapshot) == []
+    assert view.files()[0].fp.read() == b"png-bytes" and view.needs_confirm(FakeInteraction(OWNER_ID)) is False
+
+
+async def test_server_insights_notes_when_counts_are_off_or_missing(insights: SimpleNamespace) -> None:
+    rig = insights.rig
+    interaction = FakeInteraction(OWNER_ID)
+    await rig.command("dev server insights").callback(rig.cog, interaction, str(OTHER_GUILD_ID), "90d")
+    assert "**No activity counts yet**" in card_text(interaction.calls[1][2])
+
+    rig.stats.disabled.add(OTHER_GUILD_ID)
+    off = FakeInteraction(OWNER_ID)
+    await rig.command("dev server insights").callback(rig.cog, off, str(OTHER_GUILD_ID), "90d")
+    assert "Activity counts are off here" in card_text(off.calls[1][2])
+    rig.stats.disabled.clear()
+
+    dm = FakeInteraction(OWNER_ID, guild_id=None)
+    await rig.command("dev server insights").callback(rig.cog, dm, None, "30d")
+    assert dm.sent == [("send", "Pick a server I'm in — `guild` is required here.", None, [], True)]
+
+
+async def test_user_insights_resolves_by_id_and_reads_membership(insights: SimpleNamespace) -> None:
+    rig = insights.rig
+    interaction = FakeInteraction(OWNER_ID)
+    await rig.command("dev user insights").callback(rig.cog, interaction, None, str(MOD_ID), None, "30d")
+
+    kind, _, view, files, ephemeral = interaction.calls[1]
+    assert kind == "followup" and ephemeral and isinstance(view, InsightsView) and view.sensitive
+    assert [file.filename for file in files] == ["insights.png"]
+    text = card_text(view)
+    assert text.startswith("# mod\nmod · `") and "**Mutual servers:** `2`" in text and "**Flags:** none" in text
+    assert "### In Spork Lab" in text and f"**Top role:** <@&{MODS_ROLE}> (2 roles)" in text
+    assert "**Timed out:** no" in text and "**Administrator:** no" in text and "**Boosting since:** not boosting" in text
+    assert "**Message rank:** top 25% (#1 of 4, `12` messages)" in text
+    assert "### Anti-brainrot" not in text  # the cog isn't loaded in this rig
+    assert f"User ID: {MOD_ID} • Guild ID: {GUILD_ID}" in text and "No activity counts yet" in text
+    assert insights.fetched == [MOD_ID] and insights.store.calls == [("member", GUILD_ID, MOD_ID, 30)]
+    assert rig.cog.audit.rows[-1] == {
+        "user_id": OWNER_ID,
+        "command": "dev user insights",
+        "guild_id": GUILD_ID,
+        "target_user_id": MOD_ID,
+        "channel_id": None,
+    }
+    assert view.needs_confirm(FakeInteraction(OWNER_ID)) is True and view.subject == "mod in Spork Lab"
+
+    chart = insights.renders[0]
+    assert [panel.title for panel in chart.panels] == [
+        "Messages per day",
+        "Activity by hour (UTC)",
+        "Top channels",
+        "Commands used",
+    ]
+    assert chart.accent == discord.Colour(0x123456).to_rgb()
+
+    picked = FakeInteraction(OWNER_ID)
+    await rig.command("dev user insights").callback(
+        rig.cog, picked, rig.guild.get_member(USER_ID), None, str(OTHER_GUILD_ID), "7d"
+    )
+    text = card_text(picked.calls[1][2])
+    assert "### In Elsewhere" in text and "**Top role:** Members (1 role)" in text  # plain name outside the origin server
+    assert "**Message rank:** no messages in the last 7 days" in text
+    assert insights.fetched == [MOD_ID, USER_ID] and len(insights.renders) == 2
+
+
+async def test_user_insights_handles_unknown_users_and_non_members(insights: SimpleNamespace) -> None:
+    rig = insights.rig
+    nothing = FakeInteraction(OWNER_ID)
+    await rig.command("dev user insights").callback(rig.cog, nothing, None, None, None, "30d")
+    assert nothing.sent == [("send", "Pick a user, or give me a user id.", None, [], True)]
+
+    gone = FakeInteraction(OWNER_ID)
+    await rig.command("dev user insights").callback(rig.cog, gone, None, str(GONE_ID), None, "30d")
+    assert gone.sent == [("send", "I can't find that user.", None, [], True)]
+    assert rig.cog.audit.rows == []
+
+    async def fetch_member(self, member_id: int):
+        raise discord.NotFound(SimpleNamespace(status=404, reason="Not Found"), {"message": "Unknown Member", "code": 10007})
+
+    stranger_id = BASE + 5151
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(discord.Guild, "fetch_member", fetch_member)
+        outsider = FakeInteraction(OWNER_ID)
+        await rig.command("dev user insights").callback(rig.cog, outsider, None, str(stranger_id), None, "30d")
+    text = card_text(outsider.calls[1][2])
+    assert "Not a member right now" in text and "**Message rank:** no messages" in text and "**Mutual servers:** `0`" in text
+
+
+async def test_user_insights_includes_brainrot_when_the_cog_is_loaded(insights: SimpleNamespace) -> None:
+    from test_brainrot_cog import FakeStore
+
+    from exts.brainrot import Brainrot
+    from exts.utils.brainrot import BrainrotConfig
+    from exts.utils.heat import HeatState
+
+    rig = insights.rig
+    cog = Brainrot(rig.bot)
+    store = FakeStore(BrainrotConfig(GUILD_ID))
+    store.states[(GUILD_ID, MOD_ID)] = HeatState(heat=3, heat_updated_at=discord.utils.utcnow(), lifetime_offenses=17)
+    cog.store = store  # type: ignore[assignment] — in-memory stand-in
+    await rig.bot.add_cog(cog)
+    cog.expire_mutes.cancel()
+    cog.cleanup.cancel()
+    try:
+        interaction = FakeInteraction(OWNER_ID)
+        await rig.command("dev user insights").callback(rig.cog, interaction, None, str(MOD_ID), None, "30d")
+        assert "### Anti-brainrot\n**Heat:** `3` · **Lifetime offenses:** `17`" in card_text(interaction.calls[1][2])
+    finally:
+        await rig.bot.remove_cog(cog.qualified_name)
