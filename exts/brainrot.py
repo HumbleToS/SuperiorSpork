@@ -4,17 +4,18 @@ import asyncio
 import contextlib
 import datetime
 import logging
+import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import discord
-from discord import ui
+from discord import app_commands, ui
 from discord.ext import commands, tasks
 
 from .utils.brainrot import BrainrotConfig, BrainrotStore
 from .utils.cache import TTLCache
 from .utils.embeds import pastel_color
-from .utils.heat import MAX_HEAT, HeatEngine, Outcome
+from .utils.heat import DECAY_SECONDS, MAX_HEAT, MAX_TIMEOUT_SECONDS, HeatEngine, Outcome, normalize
 from .utils.layouts import SporkLayout
 from .utils.time import ts
 from .utils.wording import plural
@@ -31,12 +32,34 @@ _logger = logging.getLogger(__name__)
 SWEEP_SECONDS = 30
 CLEANUP_TIME = datetime.time(hour=4, minute=30, tzinfo=datetime.UTC)
 SCORED_TTL = 3600  # an edit to a message older than this can be scored again; the cap keeps memory flat
+MAX_CHANNELS = 50
+MAX_CUSTOM_TERMS = 100
+MAX_EXEMPTIONS = 50
+MIN_TERM_LENGTH = 3
+MAX_TERM_LENGTH = 40
+MAX_LADDER_STEPS = 5
+MAX_TIMEOUT_MINUTES = MAX_TIMEOUT_SECONDS // 60
+LEADERBOARD_SIZE = 10
+PODIUM_SIZE = 3
+WatchableChannel = discord.TextChannel | discord.VoiceChannel | discord.ForumChannel | discord.Thread
 HEAT_LINES: dict[int, tuple[str, str]] = {
-    1: ("Heat rising", "that was a little brainrot"),
-    2: ("The rot sets in", "your vocabulary is slipping"),
-    3: ("Getting cooked", "touch some grass soon"),
-    4: ("Well done", "one more and you're off the stove"),
+    1: ("Heat rising", "that was a little brainrot."),
+    2: ("The rot sets in", "your vocabulary is slipping."),
+    3: ("Getting cooked", "touch some grass soon."),
+    4: ("Well done", "one more and you're off the stove."),
 }
+# lifetime offenses needed for each leaderboard title, lowest first
+TIERS: tuple[tuple[int, str], ...] = (
+    (0, "Raw"),
+    (1, "Lightly Seared"),
+    (5, "Medium"),
+    (15, "Well Done"),
+    (30, "Cooked"),
+    (60, "Burnt"),
+    (100, "Charcoal"),
+)
+_LADDER_STEP = re.compile(r"(\d+)([mhd]?)")
+_UNIT_SECONDS = {"": 60, "m": 60, "h": 3600, "d": 86400}
 
 
 def heat_bar(heat: int) -> str:
@@ -50,6 +73,34 @@ def duration(seconds: int) -> str:
     if seconds < 2 * 86400:
         return f"{plural(seconds // 3600):hour}"
     return f"{plural(seconds // 86400):day}"
+
+
+def tier_title(offenses: int) -> str:
+    title = TIERS[0][1]
+    for threshold, name in TIERS:
+        if offenses >= threshold:
+            title = name
+    return title
+
+
+def parse_ladder(text: str) -> tuple[int, ...] | None:
+    """Reads "30m 2h 24h" style ladders; None when any step is unreadable, too long, or there are too many."""
+    steps: list[int] = []
+    for raw in re.split(r"[,\s]+", text.strip().lower()):
+        if not raw:
+            continue
+        match = _LADDER_STEP.fullmatch(raw)
+        if match is None:
+            return None
+        seconds = int(match[1]) * _UNIT_SECONDS[match[2]]
+        if seconds <= 0 or seconds > MAX_TIMEOUT_SECONDS:
+            return None
+        steps.append(seconds)
+    return tuple(steps) if 0 < len(steps) <= MAX_LADDER_STEPS else None
+
+
+def format_ladder(ladder: tuple[int, ...]) -> str:
+    return " → ".join(duration(seconds) for seconds in ladder)
 
 
 def warning_card(name: str, outcome: Outcome, punished: bool, guild_id: int) -> SporkLayout:
@@ -397,6 +448,711 @@ class Brainrot(commands.Cog):
         """Anti-brainrot: heat, mutes, and the leaderboard"""
         if ctx.invoked_subcommand is None:
             await ctx.send("Try `brainrot score`, `brainrot leaderboard`, or `brainrot enable`.")
+
+    def channel_problems(self, channel: discord.abc.GuildChannel | discord.Thread, config: BrainrotConfig) -> str | None:
+        perms = channel.permissions_for(channel.guild.me)
+        needed = [
+            ("View Channel", perms.view_channel),
+            ("Send Messages", perms.send_messages),
+            ("Embed Links", perms.embed_links),
+        ]
+        if config.delete_messages:
+            needed.append(("Manage Messages", perms.manage_messages))
+        missing = [name for name, granted in needed if not granted]
+        return f"{channel.mention}: I'm missing {', '.join(missing)}" if missing else None
+
+    def readiness(self, guild: discord.Guild, config: BrainrotConfig) -> list[str]:
+        """Everything that would make the feature fail later, as lines an admin can act on."""
+        me = guild.me
+        problems: list[str] = []
+        role = guild.get_role(config.mute_role_id) if config.mute_mode == "role" and config.mute_role_id else None
+        if config.mute_mode == "role":
+            if role is None:
+                problems.append("the muted role isn't set or no longer exists — `brainrot config mode role @role`")
+            else:
+                if not me.guild_permissions.manage_roles:
+                    problems.append("I need Manage Roles to apply the muted role")
+                if role >= me.top_role:
+                    problems.append(f"{role.mention} has to sit below my top role")
+            if not me.guild_permissions.moderate_members:
+                problems.append("I need Moderate Members for repeat-offender timeouts")
+        elif not me.guild_permissions.moderate_members:
+            problems.append("I need Moderate Members to time people out")
+        for channel_id in sorted(config.channel_ids):
+            channel = guild.get_channel_or_thread(channel_id)
+            if channel is None:
+                problems.append(f"<#{channel_id}> no longer exists — `brainrot channels remove` it")
+                continue
+            problem = self.channel_problems(channel, config)
+            if problem is not None:
+                problems.append(problem)
+        return problems
+
+    @brainrot.command()
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    async def enable(self, ctx: GuildContext) -> None:
+        """Turns anti-brainrot on, after checking I have what I need"""
+        config = await self.store.get_config(ctx.guild.id)
+        problems = self.readiness(ctx.guild, config)
+        if problems:
+            lines = "\n".join(f"╰ {problem}" for problem in problems)
+            await ctx.send(
+                f"Not yet — fix these and run `brainrot enable` again:\n{lines}",
+                ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            return
+        await self.store.set_config(ctx.guild.id, "enabled", True)
+        if config.channel_ids:
+            note = f"Watching {plural(len(config.channel_ids)):channel}."
+        else:
+            note = "No channels are opted in yet — `brainrot channels add #channel` picks them."
+        await ctx.send(f"Anti-brainrot is on! {note}", ephemeral=True)
+
+    @brainrot.command()
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    async def disable(self, ctx: GuildContext) -> None:
+        """Turns anti-brainrot off; settings and the leaderboard are kept"""
+        await self.store.set_config(ctx.guild.id, "enabled", False)
+        await ctx.send("Anti-brainrot is off. Everything is kept, `brainrot enable` brings it back.", ephemeral=True)
+
+    # channels
+
+    @brainrot.group()
+    async def channels(self, ctx: GuildContext) -> None:
+        """Which channels are watched"""
+        if ctx.invoked_subcommand is None:
+            await ctx.send("Try `brainrot channels add`, `brainrot channels remove`, or `brainrot channels list`.")
+
+    @channels.command(name="add")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @app_commands.describe(channel="A channel to watch; threads and forum posts follow their parent")
+    async def channels_add(self, ctx: GuildContext, channel: WatchableChannel) -> None:
+        """Starts watching a channel
+
+        Parameters
+        ----------
+        channel : discord.TextChannel | discord.VoiceChannel | discord.ForumChannel | discord.Thread
+            A channel to watch; threads and forum posts follow their parent
+        """
+        config = await self.store.get_config(ctx.guild.id)
+        if channel.id in config.channel_ids:
+            await ctx.send(f"{channel.mention} is already being watched.", ephemeral=True)
+            return
+        if len(config.channel_ids) >= MAX_CHANNELS:
+            await ctx.send(f"That's the limit — {MAX_CHANNELS} channels per server.", ephemeral=True)
+            return
+        await self.store.set_config(ctx.guild.id, "channel_ids", [*config.channel_ids, channel.id])
+        problem = self.channel_problems(channel, config)
+        note = f"\n╰ Heads up: {problem}" if problem else ""
+        await ctx.send(f"Now watching {channel.mention}.{note}", ephemeral=True)
+
+    @channels.command(name="remove")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @app_commands.describe(channel="The channel to stop watching")
+    async def channels_remove(self, ctx: GuildContext, channel: WatchableChannel) -> None:
+        """Stops watching a channel
+
+        Parameters
+        ----------
+        channel : discord.TextChannel | discord.VoiceChannel | discord.ForumChannel | discord.Thread
+            The channel to stop watching
+        """
+        config = await self.store.get_config(ctx.guild.id)
+        if channel.id not in config.channel_ids:
+            await ctx.send(f"{channel.mention} wasn't being watched.", ephemeral=True)
+            return
+        await self.store.set_config(ctx.guild.id, "channel_ids", [cid for cid in config.channel_ids if cid != channel.id])
+        await ctx.send(f"No longer watching {channel.mention}.", ephemeral=True)
+
+    @channels.command(name="list")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    async def channels_list(self, ctx: GuildContext) -> None:
+        """Shows the watched channels"""
+        config = await self.store.get_config(ctx.guild.id)
+        mentions = (
+            ", ".join(f"<#{cid}>" for cid in sorted(config.channel_ids)) or "None yet — `brainrot channels add #channel`"
+        )
+        items: list[ui.Item] = [
+            ui.TextDisplay("# Watched channels"),
+            ui.Separator(spacing=discord.SeparatorSpacing.large),
+            ui.TextDisplay(f"### Channels\n{mentions}"),
+            ui.TextDisplay("### Threads\nThreads and forum posts inside a watched channel are watched too."),
+            ui.Separator(),
+            ui.TextDisplay(f"-# {'On' if config.enabled else 'Off'} • Guild ID: {ctx.guild.id}"),
+        ]
+        await ctx.send(view=SporkLayout(*items, accent_colour=pastel_color(ctx.guild.id)), ephemeral=True)
+
+    # terms and the allowlist
+
+    async def term_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+        if interaction.guild is None:
+            return []
+        config = await self.store.get_config(interaction.guild.id)
+        wanted = normalize(current)
+        return [app_commands.Choice(name=term, value=term) for term in config.terms if wanted in term][:25]
+
+    async def allowed_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+        if interaction.guild is None:
+            return []
+        config = await self.store.get_config(interaction.guild.id)
+        wanted = normalize(current)
+        return [app_commands.Choice(name=word, value=word) for word in config.allowed_terms if wanted in word][:25]
+
+    def clean_term(self, term: str) -> str | None:
+        cleaned = normalize(term).strip()
+        if len(cleaned) < MIN_TERM_LENGTH or len(cleaned) > MAX_TERM_LENGTH:
+            return None
+        return cleaned
+
+    @brainrot.group()
+    async def terms(self, ctx: GuildContext) -> None:
+        """The brainrot vocabulary for this server"""
+        if ctx.invoked_subcommand is None:
+            await ctx.send("Try `brainrot terms add`, `brainrot terms remove`, or `brainrot terms list`.")
+
+    @terms.command(name="add")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @app_commands.describe(term="A word or short phrase to add to the list")
+    async def terms_add(self, ctx: GuildContext, *, term: str) -> None:
+        """Adds a term to this server's list
+
+        Parameters
+        ----------
+        term : str
+            A word or short phrase to add to the list
+        """
+        cleaned = self.clean_term(term)
+        if cleaned is None:
+            await ctx.send(f"Terms need to be {MIN_TERM_LENGTH} to {MAX_TERM_LENGTH} characters.", ephemeral=True)
+            return
+        config = await self.store.get_config(ctx.guild.id)
+        if cleaned in config.terms:
+            await ctx.send(f"`{cleaned}` is already on the list.", ephemeral=True)
+            return
+        if len(config.added_terms) >= MAX_CUSTOM_TERMS:
+            await ctx.send(f"That's the limit — {MAX_CUSTOM_TERMS} custom terms per server.", ephemeral=True)
+            return
+        # re-adding a default that was removed here just lifts the removal
+        if cleaned in config.removed_terms:
+            await self.store.set_config(ctx.guild.id, "removed_terms", [t for t in config.removed_terms if t != cleaned])
+        else:
+            await self.store.set_config(ctx.guild.id, "added_terms", [*config.added_terms, cleaned])
+        if cleaned in config.allowed_terms:
+            await self.store.set_config(ctx.guild.id, "allowed_terms", [t for t in config.allowed_terms if t != cleaned])
+        await ctx.send(f"Added `{cleaned}` to the list.", ephemeral=True)
+
+    @terms.command(name="remove")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @app_commands.describe(term="The term to drop from the list")
+    @app_commands.autocomplete(term=term_autocomplete)
+    async def terms_remove(self, ctx: GuildContext, *, term: str) -> None:
+        """Removes a term from this server's list, including a default one
+
+        Parameters
+        ----------
+        term : str
+            The term to drop from the list
+        """
+        cleaned = normalize(term).strip()
+        config = await self.store.get_config(ctx.guild.id)
+        if cleaned not in config.terms:
+            await ctx.send(f"`{cleaned}` isn't on the list.", ephemeral=True)
+            return
+        if cleaned in config.added_terms:
+            await self.store.set_config(ctx.guild.id, "added_terms", [t for t in config.added_terms if t != cleaned])
+        else:
+            await self.store.set_config(ctx.guild.id, "removed_terms", [*config.removed_terms, cleaned])
+        await ctx.send(f"Removed `{cleaned}` from the list.", ephemeral=True)
+
+    @terms.command(name="list")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    async def terms_list(self, ctx: GuildContext) -> None:
+        """Shows the active terms, this server's additions and removals, and the allowlist"""
+        config = await self.store.get_config(ctx.guild.id)
+
+        def joined(words: tuple[str, ...]) -> str:
+            return ", ".join(f"`{word}`" for word in words) or "None"
+
+        items: list[ui.Item] = [
+            ui.TextDisplay(f"# Brainrot vocabulary\n{plural(len(config.terms)):active term}"),
+            ui.Separator(spacing=discord.SeparatorSpacing.large),
+            ui.TextDisplay(f"### Active\n{joined(config.terms)}"),
+            ui.TextDisplay(f"### Added here\n{joined(config.added_terms)}"),
+            ui.TextDisplay(f"### Removed here\n{joined(config.removed_terms)}"),
+            ui.TextDisplay(f"### Allowed words\n{joined(config.allowed_terms)}"),
+            ui.Separator(),
+            ui.TextDisplay(
+                f"-# Matching ignores case, accents, leetspeak, and stretched letters • Guild ID: {ctx.guild.id}"
+            ),
+        ]
+        await ctx.send(view=SporkLayout(*items, accent_colour=pastel_color(ctx.guild.id)), ephemeral=True)
+
+    @brainrot.group()
+    async def allow(self, ctx: GuildContext) -> None:
+        """Words this server uses legitimately"""
+        if ctx.invoked_subcommand is None:
+            await ctx.send("Try `brainrot allow add`, `brainrot allow remove`, or `brainrot allow list`.")
+
+    @allow.command(name="add")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @app_commands.describe(word="A word that should never count here, like sigma in a stats server")
+    async def allow_add(self, ctx: GuildContext, *, word: str) -> None:
+        """Allowlists a word so it never counts in this server
+
+        Parameters
+        ----------
+        word : str
+            A word that should never count here, like sigma in a stats server
+        """
+        cleaned = self.clean_term(word)
+        if cleaned is None:
+            await ctx.send(f"Words need to be {MIN_TERM_LENGTH} to {MAX_TERM_LENGTH} characters.", ephemeral=True)
+            return
+        config = await self.store.get_config(ctx.guild.id)
+        if cleaned in config.allowed_terms:
+            await ctx.send(f"`{cleaned}` is already allowed.", ephemeral=True)
+            return
+        if len(config.allowed_terms) >= MAX_CUSTOM_TERMS:
+            await ctx.send(f"That's the limit — {MAX_CUSTOM_TERMS} allowed words per server.", ephemeral=True)
+            return
+        await self.store.set_config(ctx.guild.id, "allowed_terms", [*config.allowed_terms, cleaned])
+        await ctx.send(f"`{cleaned}` is allowed here now.", ephemeral=True)
+
+    @allow.command(name="remove")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @app_commands.describe(word="The word to take off the allowlist")
+    @app_commands.autocomplete(word=allowed_autocomplete)
+    async def allow_remove(self, ctx: GuildContext, *, word: str) -> None:
+        """Takes a word off the allowlist
+
+        Parameters
+        ----------
+        word : str
+            The word to take off the allowlist
+        """
+        cleaned = normalize(word).strip()
+        config = await self.store.get_config(ctx.guild.id)
+        if cleaned not in config.allowed_terms:
+            await ctx.send(f"`{cleaned}` isn't on the allowlist.", ephemeral=True)
+            return
+        await self.store.set_config(ctx.guild.id, "allowed_terms", [t for t in config.allowed_terms if t != cleaned])
+        await ctx.send(f"`{cleaned}` counts again.", ephemeral=True)
+
+    @allow.command(name="list")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    async def allow_list(self, ctx: GuildContext) -> None:
+        """Shows the allowlist"""
+        config = await self.store.get_config(ctx.guild.id)
+        words = ", ".join(f"`{word}`" for word in config.allowed_terms) or "None yet — `brainrot allow add word`"
+        items: list[ui.Item] = [
+            ui.TextDisplay("# Allowed words"),
+            ui.Separator(spacing=discord.SeparatorSpacing.large),
+            ui.TextDisplay(f"### Never counted here\n{words}"),
+            ui.Separator(),
+            ui.TextDisplay(f"-# Guild ID: {ctx.guild.id}"),
+        ]
+        await ctx.send(view=SporkLayout(*items, accent_colour=pastel_color(ctx.guild.id)), ephemeral=True)
+
+    # exemptions
+
+    @brainrot.group()
+    async def exempt(self, ctx: GuildContext) -> None:
+        """Roles and members the heat system leaves alone"""
+        if ctx.invoked_subcommand is None:
+            await ctx.send("Try `brainrot exempt add`, `brainrot exempt remove`, or `brainrot exempt list`.")
+
+    @exempt.command(name="add")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @app_commands.describe(target="A role or member to exempt")
+    async def exempt_add(self, ctx: GuildContext, target: discord.Role | discord.Member) -> None:
+        """Exempts a role or member
+
+        Parameters
+        ----------
+        target : discord.Role | discord.Member
+            A role or member to exempt
+        """
+        config = await self.store.get_config(ctx.guild.id)
+        column = "exempt_role_ids" if isinstance(target, discord.Role) else "exempt_user_ids"
+        current = config.exempt_role_ids if isinstance(target, discord.Role) else config.exempt_user_ids
+        if target.id in current:
+            await ctx.send(
+                f"{target.mention} is already exempt.", ephemeral=True, allowed_mentions=discord.AllowedMentions.none()
+            )
+            return
+        if len(current) >= MAX_EXEMPTIONS:
+            await ctx.send(f"That's the limit — {MAX_EXEMPTIONS} of each kind per server.", ephemeral=True)
+            return
+        await self.store.set_config(ctx.guild.id, column, [*current, target.id])
+        await ctx.send(f"{target.mention} is exempt now.", ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    @exempt.command(name="remove")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @app_commands.describe(target="The role or member to stop exempting")
+    async def exempt_remove(self, ctx: GuildContext, target: discord.Role | discord.Member) -> None:
+        """Removes an exemption
+
+        Parameters
+        ----------
+        target : discord.Role | discord.Member
+            The role or member to stop exempting
+        """
+        config = await self.store.get_config(ctx.guild.id)
+        column = "exempt_role_ids" if isinstance(target, discord.Role) else "exempt_user_ids"
+        current = config.exempt_role_ids if isinstance(target, discord.Role) else config.exempt_user_ids
+        if target.id not in current:
+            await ctx.send(
+                f"{target.mention} wasn't exempt.", ephemeral=True, allowed_mentions=discord.AllowedMentions.none()
+            )
+            return
+        await self.store.set_config(ctx.guild.id, column, [item for item in current if item != target.id])
+        await ctx.send(
+            f"{target.mention} is fair game again.", ephemeral=True, allowed_mentions=discord.AllowedMentions.none()
+        )
+
+    @exempt.command(name="list")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    async def exempt_list(self, ctx: GuildContext) -> None:
+        """Shows exempt roles and members"""
+        config = await self.store.get_config(ctx.guild.id)
+        roles = ", ".join(f"<@&{rid}>" for rid in sorted(config.exempt_role_ids)) or "None"
+        users = ", ".join(f"<@{uid}>" for uid in sorted(config.exempt_user_ids)) or "None"
+        mods = (
+            "included" if config.include_mods else "exempt (Administrator, Manage Server, Manage Messages, Moderate Members)"
+        )
+        items: list[ui.Item] = [
+            ui.TextDisplay("# Exemptions"),
+            ui.Separator(spacing=discord.SeparatorSpacing.large),
+            ui.TextDisplay(f"### Roles\n{roles}"),
+            ui.TextDisplay(f"### Members\n{users}"),
+            ui.TextDisplay(f"### Moderators\n{mods}"),
+            ui.Separator(),
+            ui.TextDisplay(f"-# Guild ID: {ctx.guild.id}"),
+        ]
+        view = SporkLayout(*items, accent_colour=pastel_color(ctx.guild.id))
+        await ctx.send(view=view, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    # config
+
+    @brainrot.group()
+    async def config(self, ctx: GuildContext) -> None:
+        """Mute mode, durations, warnings, and the mod log"""
+        if ctx.invoked_subcommand is None:
+            await ctx.send(
+                "Try `brainrot config show`, or one of `mode`, `duration`, `ladder`, `warnings`, `delete`, `mods`, `modlog`."
+            )
+
+    @config.command(name="show")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    async def config_show(self, ctx: GuildContext) -> None:
+        """Shows every anti-brainrot setting"""
+        config = await self.store.get_config(ctx.guild.id)
+        if config.mute_mode == "role":
+            role = f"<@&{config.mute_role_id}>" if config.mute_role_id else "no role set"
+            mute = f"Muted role ({role}) for {duration(config.mute_seconds)}"
+        else:
+            mute = f"Timeout for {duration(config.mute_seconds)}"
+        warnings = f"Deleted after {plural(config.warn_delete_seconds):second}" if config.warn_delete_seconds else "Kept"
+        modlog = f"<#{config.modlog_channel_id}>" if config.modlog_channel_id else "Not set"
+        problems = self.readiness(ctx.guild, config)
+        items: list[ui.Item] = [
+            ui.TextDisplay(
+                f"# Anti-brainrot config\n{'On' if config.enabled else 'Off'} • {plural(len(config.channel_ids)):channel} watched"
+            ),
+            ui.Separator(spacing=discord.SeparatorSpacing.large),
+            ui.TextDisplay(f"### Mute at {MAX_HEAT} heat\n{mute}"),
+            ui.TextDisplay(f"### Repeat ladder\n{format_ladder(config.ladder_seconds)}"),
+            ui.TextDisplay(
+                f"### Warnings\n{warnings}"
+                f"\n╰ offending messages are {'deleted' if config.delete_messages else 'kept'}"
+                f"\n╰ moderators are {'included' if config.include_mods else 'exempt'}"
+            ),
+            ui.TextDisplay(f"### Mod log\n{modlog}"),
+        ]
+        if problems:
+            items.append(ui.TextDisplay("### Needs attention\n" + "\n".join(f"╰ {problem}" for problem in problems)))
+        items.extend(
+            (ui.Separator(), ui.TextDisplay(f"-# {plural(len(config.terms)):active term} • Guild ID: {ctx.guild.id}"))
+        )
+        view = SporkLayout(*items, accent_colour=pastel_color(ctx.guild.id))
+        await ctx.send(view=view, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    @config.command(name="mode")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @app_commands.describe(
+        mode="timeout uses Discord's built-in timeout; role applies a muted role", role="The muted role, for role mode"
+    )
+    async def config_mode(
+        self, ctx: GuildContext, mode: Literal["timeout", "role"], role: discord.Role | None = None
+    ) -> None:
+        """Picks how a full heat bar is punished
+
+        Parameters
+        ----------
+        mode : Literal["timeout", "role"]
+            timeout uses Discord's built-in timeout; role applies a muted role
+        role : discord.Role | None, optional
+            The muted role, for role mode
+        """
+        if mode == "role":
+            if role is None:
+                await ctx.send("Role mode needs a role: `brainrot config mode role @Muted`.", ephemeral=True)
+                return
+            if role.is_default() or role.managed:
+                await ctx.send("That role can't be handed out — pick a regular one.", ephemeral=True)
+                return
+            await self.store.set_config(ctx.guild.id, "mute_role_id", role.id)
+        config = await self.store.set_config(ctx.guild.id, "mute_mode", mode)
+        problems = [problem for problem in self.readiness(ctx.guild, config) if "channel" not in problem.lower()]
+        note = "\n" + "\n".join(f"╰ {problem}" for problem in problems) if problems else ""
+        if mode == "role" and role is not None:
+            text = f"Full bars now apply {role.mention}. Repeat offenders still get timeouts.{note}"
+        else:
+            text = f"Full bars now use a timeout.{note}"
+        await ctx.send(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    @config.command(name="duration")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @app_commands.describe(minutes="How long a full-bar mute lasts, in minutes (default 5)")
+    async def config_duration(self, ctx: GuildContext, minutes: commands.Range[int, 1, MAX_TIMEOUT_MINUTES]) -> None:
+        """Sets how long a full-bar mute lasts
+
+        Parameters
+        ----------
+        minutes : int
+            How long a full-bar mute lasts, in minutes (default 5)
+        """
+        await self.store.set_config(ctx.guild.id, "mute_seconds", minutes * 60)
+        await ctx.send(f"A full bar now means {duration(minutes * 60)}.", ephemeral=True)
+
+    @config.command(name="ladder")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @app_commands.describe(steps="Timeouts for repeat offenders, like 30m 2h 24h (up to 5 steps, 28d max)")
+    async def config_ladder(self, ctx: GuildContext, *, steps: str) -> None:
+        """Sets the repeat-offender timeout ladder
+
+        Parameters
+        ----------
+        steps : str
+            Timeouts for repeat offenders, like 30m 2h 24h (up to 5 steps, 28d max)
+        """
+        ladder = parse_ladder(steps)
+        if ladder is None:
+            await ctx.send(
+                "I couldn't read that — try something like `30m 2h 24h` (minutes, hours, or days; up to 5 steps; 28d max).",
+                ephemeral=True,
+            )
+            return
+        await self.store.set_config(ctx.guild.id, "ladder_seconds", list(ladder))
+        await ctx.send(f"Repeat offenders now climb {format_ladder(ladder)}.", ephemeral=True)
+
+    @config.command(name="warnings")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @app_commands.describe(seconds="Seconds before a warning deletes itself; 0 keeps them (default 30)")
+    async def config_warnings(self, ctx: GuildContext, seconds: commands.Range[int, 0, 600]) -> None:
+        """Sets how long warnings stay in chat
+
+        Parameters
+        ----------
+        seconds : int
+            Seconds before a warning deletes itself; 0 keeps them (default 30)
+        """
+        await self.store.set_config(ctx.guild.id, "warn_delete_seconds", seconds)
+        text = f"Warnings now disappear after {plural(seconds):second}." if seconds else "Warnings now stay in chat."
+        await ctx.send(text, ephemeral=True)
+
+    @config.command(name="delete")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @app_commands.describe(enabled="Whether offending messages get deleted (needs Manage Messages)")
+    async def config_delete(self, ctx: GuildContext, enabled: bool) -> None:
+        """Sets whether offending messages are deleted
+
+        Parameters
+        ----------
+        enabled : bool
+            Whether offending messages get deleted (needs Manage Messages)
+        """
+        config = await self.store.set_config(ctx.guild.id, "delete_messages", enabled)
+        problems = [problem for problem in self.readiness(ctx.guild, config) if "Manage Messages" in problem]
+        note = "\n" + "\n".join(f"╰ {problem}" for problem in problems) if problems else ""
+        text = f"Offending messages are now {'deleted' if enabled else 'kept'}.{note}"
+        await ctx.send(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    @config.command(name="mods")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @app_commands.describe(included="Whether moderators get heat too (they're exempt by default)")
+    async def config_mods(self, ctx: GuildContext, included: bool) -> None:
+        """Sets whether moderators are included
+
+        Parameters
+        ----------
+        included : bool
+            Whether moderators get heat too (they're exempt by default)
+        """
+        await self.store.set_config(ctx.guild.id, "include_mods", included)
+        text = "Moderators are fair game now." if included else "Moderators are exempt again."
+        await ctx.send(text, ephemeral=True)
+
+    @config.command(name="modlog")
+    @commands.guild_only()
+    @commands.has_guild_permissions(manage_guild=True)
+    @app_commands.describe(channel="Where mutes, timeouts, and pardons get logged; leave empty to turn it off")
+    async def config_modlog(self, ctx: GuildContext, channel: discord.TextChannel | discord.Thread | None = None) -> None:
+        """Sets the mod log channel
+
+        Parameters
+        ----------
+        channel : discord.TextChannel | discord.Thread | None, optional
+            Where mutes, timeouts, and pardons get logged; leave empty to turn it off
+        """
+        await self.store.set_config(ctx.guild.id, "modlog_channel_id", channel.id if channel else None)
+        if channel is None:
+            await ctx.send("The mod log is off.", ephemeral=True)
+            return
+        problem = self.channel_problems(channel, BrainrotConfig(ctx.guild.id))
+        note = f"\n╰ Heads up: {problem}" if problem else ""
+        await ctx.send(f"Mutes, timeouts, and pardons now go to {channel.mention}.{note}", ephemeral=True)
+
+    # moderation and the public surfaces
+
+    @brainrot.command()
+    @commands.guild_only()
+    @commands.has_guild_permissions(moderate_members=True)
+    @app_commands.describe(member="Who to pardon", amount="Heat to remove; 0 or empty clears everything")
+    async def pardon(self, ctx: GuildContext, member: discord.Member, amount: commands.Range[int, 0, MAX_HEAT] = 0) -> None:
+        """Clears someone's heat, repeat flag, and any mute I applied
+
+        Parameters
+        ----------
+        member : discord.Member
+            Who to pardon
+        amount : int, optional
+            Heat to remove; 0 or empty clears everything, by default 0
+        """
+        guild = ctx.guild
+        async with self._locked(guild.id, member.id):
+            state = await self.store.get_state(guild.id, member.id)
+            pardoned = self.engine.pardon(state, amount or None)
+            await self.store.put_state(guild.id, member.id, pardoned)
+            if not amount:
+                mute = await self.store.get_mute(guild.id, member.id)
+                if mute is not None:
+                    await self.lift(
+                        guild, member.id, mute["muted_role_id"], f"Anti-brainrot: pardoned by {ctx.author} ({ctx.author.id})"
+                    )
+                    await self.store.clear_mute(guild.id, member.id)
+        config = await self.store.get_config(guild.id)
+        if not amount:
+            text = f"{member.mention} is pardoned — heat cleared, off the repeat list, and unmuted if I'd muted them."
+            status = f"### Heat\n{heat_bar(0)} `0/{MAX_HEAT}`"
+        else:
+            text = f"Took {plural(amount):point} off {member.mention} — they're at `{pardoned.heat}/{MAX_HEAT}` now."
+            status = f"### Heat\n{heat_bar(pardoned.heat)} `{pardoned.heat}/{MAX_HEAT}`"
+        await self.modlog(config, member, f"Pardoned by {ctx.author.mention}", status)
+        _logger.info(f"brainrot pardon {guild.id=} {member.id=} by {ctx.author.id} {amount=}")
+        await ctx.send(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    @brainrot.command()
+    @commands.guild_only()
+    @commands.cooldown(1, 5.0, commands.BucketType.user)
+    @app_commands.describe(member="Whose heat to check, defaults to you")
+    async def score(self, ctx: GuildContext, member: discord.Member | None = None) -> None:
+        """Shows someone's heat, repeat status, and lifetime offenses
+
+        Parameters
+        ----------
+        member : discord.Member | None, optional
+            Whose heat to check, defaults to you
+        """
+        member = member or ctx.author
+        state = await self.store.get_state(ctx.guild.id, member.id)
+        decayed = self.engine.decayed(state)
+        if decayed.heat > 0 and decayed.heat_updated_at is not None:
+            cooling = f"╰ next point cools {ts(decayed.heat_updated_at + datetime.timedelta(seconds=DECAY_SECONDS)):R}"
+        else:
+            cooling = "╰ fully cooled off"
+        if self.engine.is_repeat(state) and state.repeat_until is not None:
+            repeat = (
+                f"On it — clears {ts(state.repeat_until):R}"
+                f"\n╰ strike `{state.escalation_level}`, the next offense is a timeout"
+            )
+        else:
+            repeat = "Clean"
+        rank = await self.store.rank(ctx.guild.id, member.id)
+        lifetime = f"`{state.lifetime_offenses:,}` offenses"
+        if rank is not None:
+            lifetime += f"\n╰ #{rank:,} on the leaderboard"
+        items: list[ui.Item] = [
+            ui.Section(
+                f"# {discord.utils.escape_markdown(member.display_name)}\n{tier_title(state.lifetime_offenses)}",
+                accessory=ui.Thumbnail(member.display_avatar.url),
+            ),
+            ui.Separator(spacing=discord.SeparatorSpacing.large),
+            ui.TextDisplay(f"### Heat\n{heat_bar(decayed.heat)} `{decayed.heat}/{MAX_HEAT}`\n{cooling}"),
+            ui.TextDisplay(f"### Repeat list\n{repeat}"),
+            ui.TextDisplay(f"### Lifetime\n{lifetime}"),
+            ui.Separator(),
+            ui.TextDisplay(f"-# Heat cools 1 point an hour • User ID: {member.id}"),
+        ]
+        await ctx.send(view=SporkLayout(*items, accent_colour=pastel_color(member.id)))
+
+    @brainrot.command()
+    @commands.guild_only()
+    @commands.cooldown(1, 5.0, commands.BucketType.user)
+    async def leaderboard(self, ctx: GuildContext) -> None:
+        """The server's most cooked members, by lifetime offenses"""
+        guild = ctx.guild
+        rows = await self.store.leaderboard(guild.id, LEADERBOARD_SIZE)
+        if not rows:
+            await ctx.send("Nobody has been cooked here yet!")
+            return
+
+        def name_of(user_id: int) -> str:
+            member = guild.get_member(user_id)
+            return discord.utils.escape_markdown(member.display_name) if member else f"<@{user_id}>"
+
+        title = f"# Most Cooked\nThe brainrot leaderboard for {discord.utils.escape_markdown(guild.name)}"
+        header = ui.Section(title, accessory=ui.Thumbnail(guild.icon.url)) if guild.icon else ui.TextDisplay(title)
+        items: list[ui.Item] = [header, ui.Separator(spacing=discord.SeparatorSpacing.large)]
+        for place, row in enumerate(rows[:PODIUM_SIZE], start=1):
+            offenses = row["lifetime_offenses"]
+            noun = "offense" if offenses == 1 else "offenses"
+            items.append(
+                ui.TextDisplay(f"### #{place} {name_of(row['user_id'])}\n{tier_title(offenses)} • `{offenses:,}` {noun}")
+            )
+        rest = rows[PODIUM_SIZE:]
+        if rest:
+            lines = "\n".join(
+                f"**#{place}** {name_of(row['user_id'])} • {tier_title(row['lifetime_offenses'])} • `{row['lifetime_offenses']:,}`"
+                for place, row in enumerate(rest, start=PODIUM_SIZE + 1)
+            )
+            items.append(ui.TextDisplay(f"### The rest of the kitchen\n{lines}"))
+        items.append(ui.Separator())
+        items.append(ui.TextDisplay(f"-# Lifetime offenses • `brainrot score` for the details • Guild ID: {guild.id}"))
+        view = SporkLayout(*items, accent_colour=pastel_color(guild.id))
+        await ctx.send(view=view, allowed_mentions=discord.AllowedMentions.none())
 
 
 async def setup(bot: Spork) -> None:

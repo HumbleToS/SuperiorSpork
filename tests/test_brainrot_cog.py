@@ -10,23 +10,26 @@ import discord
 import pytest
 from discord.ext import commands
 
-from exts.brainrot import Brainrot
+from exts.brainrot import Brainrot, parse_ladder, tier_title
 from exts.utils.brainrot import BrainrotConfig
-from exts.utils.heat import HeatState
+from exts.utils.heat import DEFAULT_TERMS, HeatState
 
-GUILD_ID = 100
-CHANNEL_ID = 200
-OTHER_CHANNEL_ID = 201
-THREAD_ID = 202
-BOT_ID = 1
-OWNER_ID = 2
-MOD_ID = 3
-USER_ID = 4
-EXEMPT_ID = 5
-BOT_ROLE_ID = 300
-MOD_ROLE_ID = 301
-EXEMPT_ROLE_ID = 302
-MUTE_ROLE_ID = 303
+# converters only accept snowflake-length ids, so every fixture id sits on a realistic base
+BASE = 10**17
+GUILD_ID = BASE + 100
+CHANNEL_ID = BASE + 200
+OTHER_CHANNEL_ID = BASE + 201
+THREAD_ID = BASE + 202
+BOT_ID = BASE + 1
+OWNER_ID = BASE + 2
+MOD_ID = BASE + 3
+USER_ID = BASE + 4
+EXEMPT_ID = BASE + 5
+GONE_ID = BASE + 6  # never a member
+BOT_ROLE_ID = BASE + 300
+MOD_ROLE_ID = BASE + 301
+EXEMPT_ROLE_ID = BASE + 302
+MUTE_ROLE_ID = BASE + 303
 NOW = "2026-01-01T00:00:00+00:00"
 
 
@@ -39,6 +42,44 @@ class FakeStore:
 
     async def get_config(self, guild_id: int) -> BrainrotConfig:
         return self.config
+
+    async def set_config(self, guild_id: int, column: str, value) -> BrainrotConfig:
+        shape = {
+            "channel_ids": frozenset,
+            "exempt_role_ids": frozenset,
+            "exempt_user_ids": frozenset,
+            "added_terms": tuple,
+            "removed_terms": tuple,
+            "allowed_terms": tuple,
+            "ladder_seconds": tuple,
+        }
+        self.config = replace(self.config, **{column: shape.get(column, lambda v: v)(value)})
+        return self.config
+
+    def cached_config(self, guild_id: int) -> BrainrotConfig | None:
+        return self.config
+
+    def invalidate(self, guild_id: int) -> None:
+        pass
+
+    async def get_mute(self, guild_id: int, user_id: int) -> dict | None:
+        entry = self.mutes.get((guild_id, user_id))
+        if entry is None or entry[0] <= discord.utils.utcnow():
+            return None
+        return {"mute_expires_at": entry[0], "muted_role_id": entry[1]}
+
+    async def leaderboard(self, guild_id: int, limit: int = 10) -> list[dict]:
+        rows = [(u, s.lifetime_offenses) for (g, u), s in self.states.items() if g == guild_id and s.lifetime_offenses > 0]
+        rows.sort(key=lambda row: (-row[1], row[0]))
+        return [{"user_id": u, "lifetime_offenses": n} for u, n in rows[:limit]]
+
+    async def rank(self, guild_id: int, user_id: int) -> int | None:
+        mine = self.states.get((guild_id, user_id))
+        if mine is None or mine.lifetime_offenses == 0:
+            return None
+        return 1 + sum(
+            1 for (g, _), s in self.states.items() if g == guild_id and s.lifetime_offenses > mine.lifetime_offenses
+        )
 
     async def get_state(self, guild_id: int, user_id: int) -> HeatState:
         await asyncio.sleep(0)  # yield like a real query would, so races have room to happen
@@ -105,9 +146,14 @@ def channel(channel_id: int, name: str) -> dict:
 
 
 BOT_PERMS = discord.Permissions(
-    view_channel=True, send_messages=True, moderate_members=True, manage_roles=True, manage_messages=True
+    view_channel=True,
+    send_messages=True,
+    embed_links=True,
+    moderate_members=True,
+    manage_roles=True,
+    manage_messages=True,
 ).value
-MOD_PERMS = discord.Permissions(manage_messages=True).value
+MOD_PERMS = discord.Permissions(manage_messages=True, moderate_members=True).value
 
 
 def guild_payload() -> dict:
@@ -172,6 +218,7 @@ def guild_payload() -> dict:
 class Calls:
     def __init__(self) -> None:
         self.sent: list[dict] = []
+        self.errors: list[BaseException] = []
         self.timeouts: list[tuple[int, datetime.datetime | None]] = []
         self.roles: list[tuple[str, int, int]] = []
         self.deleted: list[int] = []
@@ -202,12 +249,20 @@ async def rig(config: BrainrotConfig, monkeypatch: pytest.MonkeyPatch) -> Simple
     cog = Brainrot(bot)
     cog.store = FakeStore(config)  # type: ignore[assignment] — the in-memory stand-in for this harness
     await bot.add_cog(cog)
+    for command in bot.walk_commands():
+        if command._buckets.valid:
+            command._buckets._cache.clear()  # cooldown buckets hang off the decorated callback and outlive cog instances
 
     calls = Calls()
 
     async def fake_send(self, *args, **kwargs):
-        calls.sent.append(kwargs)
+        calls.sent.append(kwargs | {"content": args[0] if args else kwargs.get("content")})
         return SimpleNamespace(delete=fake_delete_sent)
+
+    async def on_command_error(ctx, error):
+        calls.errors.append(error)
+
+    bot.add_listener(on_command_error)
 
     async def fake_delete_sent(*, delay: float | None = None):
         calls.delete_delays.append(delay)
@@ -231,6 +286,7 @@ async def rig(config: BrainrotConfig, monkeypatch: pytest.MonkeyPatch) -> Simple
         calls.deleted.append(self.id)
 
     monkeypatch.setattr(discord.abc.Messageable, "send", fake_send)
+    monkeypatch.setattr(commands.Context, "send", fake_send)  # keeps ephemeral visible; Context.send would consume it
     monkeypatch.setattr(discord.Message, "reply", fake_reply)
     monkeypatch.setattr(discord.Message, "delete", fake_delete)
     monkeypatch.setattr(discord.Member, "timeout", fake_timeout)
@@ -265,8 +321,17 @@ async def rig(config: BrainrotConfig, monkeypatch: pytest.MonkeyPatch) -> Simple
         assert target is not None
         return discord.Message(state=state, channel=target, data=data)
 
+    async def run(content: str, author_id: int = OWNER_ID) -> str | None:
+        """Runs a prefix command as the given member and returns the last reply's text (or None for a card)."""
+        before = len(calls.sent)
+        await bot.process_commands(message(content, author_id=author_id))
+        await asyncio.sleep(0)  # command errors are dispatched to listeners as tasks
+        assert calls.errors == [], calls.errors
+        assert len(calls.sent) > before, "the command sent nothing"
+        return calls.sent[-1]["content"]
+
     try:
-        yield SimpleNamespace(bot=bot, cog=cog, guild=guild, calls=calls, message=message, store=cog.store)
+        yield SimpleNamespace(bot=bot, cog=cog, guild=guild, calls=calls, message=message, store=cog.store, run=run)
     finally:
         await bot.remove_cog(cog.qualified_name)
         await bot.close()
@@ -419,3 +484,245 @@ async def test_rejoining_restores_a_pending_role_mute(rig: SimpleNamespace) -> N
 async def test_leaving_a_guild_purges_it(rig: SimpleNamespace) -> None:
     await rig.cog.on_guild_remove(rig.guild)
     assert rig.store.purged == [GUILD_ID]
+
+
+# commands, driven through the prefix path (the slash path runs the same callbacks)
+
+
+def last_card(rig: SimpleNamespace, index: int = -1) -> str:
+    view = rig.calls.sent[index]["view"]
+    assert isinstance(view, discord.ui.LayoutView)
+    texts = [item.content for item in view.walk_children() if isinstance(item, discord.ui.TextDisplay)]
+    return "\n".join(texts)
+
+
+async def test_enable_refuses_until_the_bot_has_what_it_needs(rig: SimpleNamespace) -> None:
+    rig.store.config = replace(rig.store.config, enabled=False)
+    rig.guild.me._roles.remove(BOT_ROLE_ID)
+    reply = await rig.run("t,brainrot enable")
+    assert reply is not None and "Not yet" in reply and "Moderate Members" in reply and "missing" in reply
+    assert rig.store.config.enabled is False
+
+    rig.guild.me._roles.add(BOT_ROLE_ID)
+    reply = await rig.run("t,brainrot enable")
+    assert reply is not None and reply.startswith("Anti-brainrot is on!") and rig.store.config.enabled is True
+    assert rig.calls.sent[-1]["ephemeral"] is True
+
+    reply = await rig.run("t,brainrot disable")
+    assert reply is not None and "off" in reply and rig.store.config.enabled is False
+
+
+async def test_enable_reports_a_missing_or_misplaced_muted_role(rig: SimpleNamespace) -> None:
+    rig.store.config = replace(rig.store.config, enabled=False, mute_mode="role", mute_role_id=None)
+    reply = await rig.run("t,brainrot enable")
+    assert reply is not None and "muted role isn't set" in reply
+
+    rig.store.config = replace(rig.store.config, mute_role_id=BOT_ROLE_ID)  # at the bot's own top role
+    reply = await rig.run("t,brainrot enable")
+    assert reply is not None and "below my top role" in reply
+
+
+async def test_admin_commands_need_manage_guild(rig: SimpleNamespace) -> None:
+    await rig.bot.process_commands(rig.message("t,brainrot enable", author_id=USER_ID))
+    await asyncio.sleep(0)
+    assert len(rig.calls.errors) == 1 and isinstance(rig.calls.errors[0], commands.MissingPermissions)
+
+
+async def test_channels_add_remove_list(rig: SimpleNamespace) -> None:
+    reply = await rig.run(f"t,brainrot channels add <#{OTHER_CHANNEL_ID}>")
+    assert reply is not None and "Now watching" in reply
+    assert rig.store.config.channel_ids == {CHANNEL_ID, OTHER_CHANNEL_ID}
+    reply = await rig.run(f"t,brainrot channels add <#{OTHER_CHANNEL_ID}>")
+    assert reply is not None and "already" in reply
+    reply = await rig.run(f"t,brainrot channels remove <#{CHANNEL_ID}>")
+    assert reply is not None and "No longer" in reply and rig.store.config.channel_ids == {OTHER_CHANNEL_ID}
+    await rig.run("t,brainrot channels list")
+    assert f"<#{OTHER_CHANNEL_ID}>" in last_card(rig)
+
+
+async def test_terms_add_remove_and_default_removal(rig: SimpleNamespace) -> None:
+    reply = await rig.run("t,brainrot terms add Grimace Shake")
+    assert reply is not None and "`grimace shake`" in reply
+    assert rig.store.config.matcher.hits("GRIMACE shake") == 1
+
+    reply = await rig.run("t,brainrot terms add rizz")
+    assert reply is not None and "already" in reply
+    reply = await rig.run("t,brainrot terms add ab")
+    assert reply is not None and "characters" in reply
+
+    reply = await rig.run("t,brainrot terms remove skibidi")  # a default
+    assert reply is not None and "Removed" in reply
+    assert "skibidi" in rig.store.config.removed_terms and rig.store.config.matcher.hits("skibidi") == 0
+    reply = await rig.run("t,brainrot terms add skibidi")  # lifts the removal instead of duplicating
+    assert (
+        reply is not None
+        and "Added" in reply
+        and rig.store.config.removed_terms == ()
+        and rig.store.config.added_terms == ("grimace shake",)
+    )
+
+    reply = await rig.run("t,brainrot terms remove grimace shake")
+    assert reply is not None and rig.store.config.added_terms == ()
+    reply = await rig.run("t,brainrot terms remove nonsense")
+    assert reply is not None and "isn't on the list" in reply
+
+    await rig.run("t,brainrot terms list")
+    card = last_card(rig)
+    assert "### Active" in card and "`rizz`" in card and f"{len(DEFAULT_TERMS)} active terms" in card
+
+
+async def test_allowlist_add_remove_and_autocomplete(rig: SimpleNamespace) -> None:
+    reply = await rig.run("t,brainrot allow add Sigma")
+    assert reply is not None and "allowed" in reply and rig.store.config.matcher.hits("sigma") == 0
+    assert "sigma" not in rig.store.config.terms
+
+    interaction = SimpleNamespace(guild=rig.guild)
+    choices = await rig.cog.allowed_autocomplete(interaction, "sig")
+    assert [c.value for c in choices] == ["sigma"]
+    choices = await rig.cog.term_autocomplete(interaction, "rizz")
+    assert "rizz" in [c.value for c in choices] and "sigma" not in [c.value for c in choices]
+    assert await rig.cog.term_autocomplete(SimpleNamespace(guild=None), "") == []
+
+    reply = await rig.run("t,brainrot allow remove sigma")
+    assert reply is not None and "counts again" in reply and rig.store.config.matcher.hits("sigma") == 1
+    await rig.run("t,brainrot allow list")
+    assert "None yet" in last_card(rig)
+
+
+async def test_exempt_roles_and_members(rig: SimpleNamespace) -> None:
+    reply = await rig.run(f"t,brainrot exempt add <@&{MOD_ROLE_ID}>")
+    assert reply is not None and "exempt now" in reply and MOD_ROLE_ID in rig.store.config.exempt_role_ids
+    reply = await rig.run(f"t,brainrot exempt add <@{USER_ID}>")
+    assert reply is not None and USER_ID in rig.store.config.exempt_user_ids
+    assert rig.calls.sent[-1]["allowed_mentions"].users is False
+
+    await rig.cog.inspect(rig.message("rizz"))  # the exempt member no longer scores
+    assert state_of(rig).heat == 0
+
+    reply = await rig.run(f"t,brainrot exempt remove <@{USER_ID}>")
+    assert reply is not None and "fair game" in reply and USER_ID not in rig.store.config.exempt_user_ids
+    await rig.run("t,brainrot exempt list")
+    assert f"<@&{MOD_ROLE_ID}>" in last_card(rig)
+
+
+async def test_config_setters_and_show(rig: SimpleNamespace) -> None:
+    reply = await rig.run("t,brainrot config mode role")
+    assert reply is not None and "needs a role" in reply and rig.store.config.mute_mode == "timeout"
+    reply = await rig.run(f"t,brainrot config mode role <@&{MUTE_ROLE_ID}>")
+    assert reply is not None and rig.store.config.mute_mode == "role" and rig.store.config.mute_role_id == MUTE_ROLE_ID
+    reply = await rig.run("t,brainrot config mode timeout")
+    assert reply is not None and rig.store.config.mute_mode == "timeout"
+
+    reply = await rig.run("t,brainrot config duration 10")
+    assert reply is not None and "10 minutes" in reply and rig.store.config.mute_seconds == 600
+
+    reply = await rig.run("t,brainrot config ladder 1h, 12h 3d")
+    assert reply is not None and rig.store.config.ladder_seconds == (3600, 43200, 3 * 86400)
+    assert "1 hour → 12 hours → 3 days" in reply
+    reply = await rig.run("t,brainrot config ladder 5 weeks")
+    assert reply is not None and "couldn't read" in reply
+
+    reply = await rig.run("t,brainrot config warnings 0")
+    assert reply is not None and "stay" in reply and rig.store.config.warn_delete_seconds == 0
+    reply = await rig.run("t,brainrot config delete yes")
+    assert reply is not None and rig.store.config.delete_messages is True
+    reply = await rig.run("t,brainrot config mods on")
+    assert reply is not None and rig.store.config.include_mods is True
+    reply = await rig.run(f"t,brainrot config modlog <#{OTHER_CHANNEL_ID}>")
+    assert reply is not None and rig.store.config.modlog_channel_id == OTHER_CHANNEL_ID
+    reply = await rig.run("t,brainrot config modlog")
+    assert reply is not None and rig.store.config.modlog_channel_id is None
+
+    await rig.run("t,brainrot config show")
+    card = last_card(rig)
+    assert "Timeout for 10 minutes" in card and "1 hour → 12 hours → 3 days" in card and "Kept" in card
+    assert "deleted" in card and "included" in card and "Not set" in card
+
+
+async def test_pardon_clears_everything_and_lifts_the_mute(rig: SimpleNamespace) -> None:
+    now = discord.utils.utcnow()
+    rig.store.config = replace(rig.store.config, modlog_channel_id=OTHER_CHANNEL_ID)
+    rig.store.states[(GUILD_ID, USER_ID)] = HeatState(
+        heat=3, heat_updated_at=now, repeat_until=now + datetime.timedelta(days=2), escalation_level=2, lifetime_offenses=7
+    )
+    rig.store.mutes[(GUILD_ID, USER_ID)] = (now + datetime.timedelta(minutes=5), MUTE_ROLE_ID)
+    rig.guild.get_member(USER_ID)._roles.add(MUTE_ROLE_ID)
+
+    reply = await rig.run(f"t,brainrot pardon <@{USER_ID}>", author_id=MOD_ID)
+    assert reply is not None and "pardoned" in reply
+    state = state_of(rig)
+    assert state.heat == 0 and state.repeat_until is None and state.escalation_level == 0 and state.lifetime_offenses == 7
+    assert rig.calls.roles == [("remove", USER_ID, MUTE_ROLE_ID)] and (GUILD_ID, USER_ID) not in rig.store.mutes
+    assert len(rig.calls.sent) == 2 and "Pardoned" in last_card(rig, -2)  # the mod log card went out first
+
+
+async def test_partial_pardon_only_removes_heat(rig: SimpleNamespace) -> None:
+    now = discord.utils.utcnow()
+    rig.store.states[(GUILD_ID, USER_ID)] = HeatState(
+        heat=4, heat_updated_at=now, repeat_until=now + datetime.timedelta(days=2)
+    )
+    reply = await rig.run(f"t,brainrot pardon <@{USER_ID}> 3", author_id=MOD_ID)
+    assert reply is not None and "`1/5`" in reply
+    assert state_of(rig).heat == 1 and state_of(rig).repeat_until is not None
+
+
+async def test_pardon_needs_moderate_members(rig: SimpleNamespace) -> None:
+    await rig.bot.process_commands(rig.message(f"t,brainrot pardon <@{USER_ID}>", author_id=USER_ID))
+    await asyncio.sleep(0)
+    assert len(rig.calls.errors) == 1 and isinstance(rig.calls.errors[0], commands.MissingPermissions)
+
+
+async def test_score_card(rig: SimpleNamespace) -> None:
+    now = discord.utils.utcnow()
+    rig.store.states[(GUILD_ID, USER_ID)] = HeatState(heat=2, heat_updated_at=now, lifetime_offenses=6)
+    rig.store.states[(GUILD_ID, EXEMPT_ID)] = HeatState(heat_updated_at=now, lifetime_offenses=20)
+    await rig.run(f"t,brainrot score <@{USER_ID}>", author_id=USER_ID)
+    card = last_card(rig)
+    assert "# user" in card and "Medium" in card
+    assert "▰▰▱▱▱ `2/5`" in card and "next point cools" in card
+    assert "Clean" in card and "`6` offenses" in card and "#2 on the leaderboard" in card
+    assert "ephemeral" not in rig.calls.sent[-1]  # public
+
+    await rig.run("t,brainrot score", author_id=MOD_ID)  # defaults to yourself, no row yet
+    card = last_card(rig)
+    assert "# mod" in card and "Raw" in card and "▱▱▱▱▱ `0/5`" in card and "fully cooled off" in card
+
+
+async def test_leaderboard_card(rig: SimpleNamespace) -> None:
+    now = discord.utils.utcnow()
+    for user_id, offenses in ((USER_ID, 35), (EXEMPT_ID, 12), (MOD_ID, 3), (OWNER_ID, 1), (GONE_ID, 2)):
+        rig.store.states[(GUILD_ID, user_id)] = HeatState(heat_updated_at=now, lifetime_offenses=offenses)
+    await rig.run("t,brainrot leaderboard", author_id=USER_ID)
+    card = last_card(rig)
+    assert "# Most Cooked" in card
+    assert "### #1 user\nCooked • `35` offenses" in card
+    assert "### #2 exempt\nMedium • `12` offenses" in card
+    assert "### #3 mod\nLightly Seared • `3` offenses" in card
+    assert f"**#4** <@{GONE_ID}>" in card and "**#5** owner" in card  # a departed member falls back to a mention
+    assert rig.calls.sent[-1]["allowed_mentions"].users is False
+
+
+async def test_empty_leaderboard(rig: SimpleNamespace) -> None:
+    reply = await rig.run("t,brainrot leaderboard", author_id=USER_ID)
+    assert reply == "Nobody has been cooked here yet!"
+
+
+def test_parse_ladder() -> None:
+    assert parse_ladder("30m 2h 24h") == (1800, 7200, 86400)
+    assert parse_ladder("30, 120, 1440") == (1800, 7200, 86400)
+    assert parse_ladder("1d") == (86400,)
+    assert parse_ladder("28d") == (28 * 86400,)
+    assert parse_ladder("29d") is None
+    assert parse_ladder("0m") is None
+    assert parse_ladder("") is None
+    assert parse_ladder("1h 2h 3h 4h 5h 6h") is None
+    assert parse_ladder("soon") is None
+
+
+def test_tier_titles() -> None:
+    assert tier_title(0) == "Raw"
+    assert tier_title(1) == "Lightly Seared"
+    assert tier_title(4) == "Lightly Seared"
+    assert tier_title(5) == "Medium"
+    assert tier_title(99) == "Burnt"
+    assert tier_title(1000) == "Charcoal"
