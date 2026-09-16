@@ -12,7 +12,7 @@ from discord.ext import commands
 
 from exts.brainrot import Brainrot, parse_ladder, tier_title
 from exts.utils.brainrot import BrainrotConfig
-from exts.utils.heat import DEFAULT_TERMS, HeatState
+from exts.utils.heat import DEFAULT_TERMS, HeatEngine, HeatState
 
 # converters only accept snowflake-length ids, so every fixture id sits on a realistic base
 BASE = 10**17
@@ -39,6 +39,7 @@ class FakeStore:
         self.states: dict[tuple[int, int], HeatState] = {}
         self.mutes: dict[tuple[int, int], tuple[datetime.datetime, int | None]] = {}
         self.purged: list[int] = []
+        self.logged: list[dict] = []
 
     async def get_config(self, guild_id: int) -> BrainrotConfig:
         return self.config
@@ -111,6 +112,89 @@ class FakeStore:
 
     async def purge_guild(self, guild_id: int) -> None:
         self.purged.append(guild_id)
+
+    # the action log and the dashboard reads, in memory
+
+    async def log_action(self, guild_id: int, action: str, source: str, **fields) -> None:
+        row = {
+            "id": len(self.logged) + 1,
+            "guild_id": guild_id,
+            "at": discord.utils.utcnow(),
+            "action": action,
+            "source": source,
+            "applied": True,
+            "target_user_id": None,
+            "actor_user_id": None,
+            "heat": None,
+            "heat_added": None,
+            "duration_seconds": None,
+            "escalation_level": None,
+            "field": None,
+            "before": None,
+            "after": None,
+        }
+        self.logged.append(row | fields)
+
+    async def actions(
+        self, guild_id: int, *, page: int, per_page: int, action: str | None = None, source: str | None = None
+    ) -> tuple[list[dict], int]:
+        rows = [
+            row
+            for row in reversed(self.logged)
+            if row["guild_id"] == guild_id
+            and (action is None or row["action"] == action)
+            and (source is None or row["source"] == source)
+        ]
+        start = (page - 1) * per_page
+        return rows[start : start + per_page], len(rows)
+
+    async def count_actions_since(self, guild_id: int, since: datetime.datetime) -> int:
+        return sum(1 for row in self.logged if row["guild_id"] == guild_id and row["at"] >= since)
+
+    async def prune_actions(self) -> int:
+        return 0
+
+    async def offenders(self, guild_id: int, *, page: int, per_page: int, sort: str = "heat") -> tuple[list[dict], int]:
+        engine = HeatEngine()
+        rows = []
+        for (g, u), s in self.states.items():
+            if g != guild_id or (sort == "lifetime" and s.lifetime_offenses == 0):
+                continue
+            mute = self.mutes.get((g, u))
+            rows.append(
+                {
+                    "user_id": u,
+                    "heat": s.heat,
+                    "heat_updated_at": s.heat_updated_at,
+                    "window_started_at": s.window_started_at,
+                    "window_count": s.window_count,
+                    "lifetime_offenses": s.lifetime_offenses,
+                    "repeat_until": s.repeat_until,
+                    "escalation_level": s.escalation_level,
+                    "mute_expires_at": mute[0] if mute else None,
+                    "muted_role_id": mute[1] if mute else None,
+                    "heat_now": engine.current_heat(s),
+                }
+            )
+        for row in rows:
+            row["rank"] = 1 + sum(1 for other in rows if other["lifetime_offenses"] > row["lifetime_offenses"])
+        if sort == "lifetime":
+            rows.sort(key=lambda row: (-row["lifetime_offenses"], row["user_id"]))
+        else:
+            rows.sort(key=lambda row: (-row["heat_now"], -row["lifetime_offenses"], row["user_id"]))
+        start = (page - 1) * per_page
+        return rows[start : start + per_page], len(rows)
+
+    async def summary(self, guild_id: int) -> dict:
+        engine = HeatEngine()
+        now = discord.utils.utcnow()
+        mine = [s for (g, _), s in self.states.items() if g == guild_id]
+        return {
+            "hot_users": sum(1 for s in mine if engine.current_heat(s) > 0),
+            "muted_now": sum(1 for (g, _), (expires, _) in self.mutes.items() if g == guild_id and expires > now),
+            "on_repeat_list": sum(1 for s in mine if s.repeat_until is not None and s.repeat_until > now),
+            "lifetime_offenses": sum(s.lifetime_offenses for s in mine),
+        }
 
 
 def user(user_id: int, name: str, bot: bool = False) -> dict:
@@ -664,6 +748,29 @@ async def test_partial_pardon_only_removes_heat(rig: SimpleNamespace) -> None:
     reply = await rig.run(f"t,brainrot pardon <@{USER_ID}> 3", author_id=MOD_ID)
     assert reply is not None and "`1/5`" in reply
     assert state_of(rig).heat == 1 and state_of(rig).repeat_until is not None
+
+
+async def test_every_outcome_and_pardon_lands_in_the_action_log(rig: SimpleNamespace) -> None:
+    await rig.cog.inspect(rig.message("rizz"))
+    await rig.cog.inspect(rig.message("rizz gyat skibidi sigma"))
+    warning, spam = rig.store.logged
+    assert warning["action"] == "warning" and warning["source"] == "auto" and warning["target_user_id"] == USER_ID
+    assert warning["heat"] == 1 and warning["heat_added"] == 1 and warning["actor_user_id"] is None
+    assert spam["action"] == "spam" and spam["heat"] == 3 and spam["applied"] is True
+    assert all(row["field"] is None and row["before"] is None for row in rig.store.logged)  # never any text
+
+    await rig.run(f"t,brainrot pardon <@{USER_ID}>", author_id=MOD_ID)
+    pardon = rig.store.logged[-1]
+    assert pardon["action"] == "pardon" and pardon["source"] == "command" and pardon["actor_user_id"] == MOD_ID
+    assert pardon["heat"] == 0 and pardon["heat_added"] == -3
+
+    await rig.run("t,brainrot config duration 10")
+    change = rig.store.logged[-1]
+    assert change["action"] == "config" and change["source"] == "command" and change["actor_user_id"] == OWNER_ID
+    assert (change["field"], change["before"], change["after"]) == ("mute_seconds", "300", "600")
+    before = len(rig.store.logged)
+    await rig.run("t,brainrot config duration 10")  # the same value again is not a change
+    assert len(rig.store.logged) == before
 
 
 async def test_pardon_needs_moderate_members(rig: SimpleNamespace) -> None:

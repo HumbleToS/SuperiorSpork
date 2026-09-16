@@ -81,3 +81,24 @@ CREATE TABLE IF NOT EXISTS brainrot_users (
 
 CREATE INDEX IF NOT EXISTS brainrot_users_lifetime_idx ON brainrot_users (guild_id, lifetime_offenses DESC);
 CREATE INDEX IF NOT EXISTS brainrot_users_mute_idx ON brainrot_users (mute_expires_at) WHERE muted_role_id IS NOT NULL;
+
+-- what the module did and when, for the dashboard's activity feed; numbers and ids only, never message content
+CREATE TABLE IF NOT EXISTS brainrot_actions (
+    id bigserial PRIMARY KEY,
+    guild_id bigint NOT NULL,
+    at timestamptz NOT NULL,
+    action text NOT NULL,
+    source text NOT NULL,
+    applied boolean NOT NULL DEFAULT true,
+    target_user_id bigint,
+    actor_user_id bigint,
+    heat integer,
+    heat_added integer,
+    duration_seconds integer,
+    escalation_level integer,
+    field text,
+    before text,
+    after text
+);
+
+CREATE INDEX IF NOT EXISTS brainrot_actions_guild_idx ON brainrot_actions (guild_id, at DESC);

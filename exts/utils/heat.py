@@ -4,7 +4,7 @@ import re
 import unicodedata
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
-from typing import Literal
+from typing import Any, Literal, Protocol, Self
 
 # The default brainrot vocabulary. Slang rots fast: revisit this every few months, drop
 # anything that has turned into a normal word, add whatever the kids are saying now.
@@ -44,6 +44,13 @@ DEFAULT_LADDER_SECONDS: tuple[int, ...] = (1800, 7200, 86400)
 MAX_TIMEOUT_SECONDS = 28 * 86400  # discord refuses anything longer
 
 OutcomeKind = Literal["heat", "spam", "mute", "escalation", "silent"]
+
+
+class Row(Protocol):
+    """Anything indexable by column name: an asyncpg record, or a dict in the tests."""
+
+    def __getitem__(self, key: str, /) -> Any: ...
+
 
 _LEET = str.maketrans({"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "$": "s"})
 _INVISIBLE = frozenset("\u200b\u200c\u200d\u2060\ufeff\u00ad")  # zero-width joiners, bom, soft hyphen
@@ -130,6 +137,18 @@ class HeatState:
     lifetime_offenses: int = 0
     repeat_until: datetime.datetime | None = None
     escalation_level: int = 0
+
+    @classmethod
+    def from_row(cls, row: Row) -> Self:
+        return cls(
+            heat=row["heat"],
+            heat_updated_at=row["heat_updated_at"],
+            window_started_at=row["window_started_at"],
+            window_count=row["window_count"],
+            lifetime_offenses=row["lifetime_offenses"],
+            repeat_until=row["repeat_until"],
+            escalation_level=row["escalation_level"],
+        )
 
 
 @dataclass(frozen=True)
