@@ -102,3 +102,82 @@ CREATE TABLE IF NOT EXISTS brainrot_actions (
 );
 
 CREATE INDEX IF NOT EXISTS brainrot_actions_guild_idx ON brainrot_actions (guild_id, at DESC);
+
+-- activity counts for the developer insights and a future dashboard: numbers, ids, dates, and command names only;
+-- never message content. Daily rows are pruned after 90 days; a server's rows go 7 days after the bot leaves it,
+-- or the moment it runs `stats off`.
+CREATE TABLE IF NOT EXISTS stats_guilds (
+    guild_id bigint PRIMARY KEY,
+    enabled boolean NOT NULL DEFAULT true,
+    tracking_since timestamptz,
+    left_at timestamptz
+);
+
+CREATE TABLE IF NOT EXISTS stats_guild_days (
+    guild_id bigint NOT NULL,
+    day date NOT NULL,
+    messages integer NOT NULL DEFAULT 0,
+    joins integer NOT NULL DEFAULT 0,
+    leaves integer NOT NULL DEFAULT 0,
+    commands integer NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, day)
+);
+
+CREATE TABLE IF NOT EXISTS stats_channel_days (
+    guild_id bigint NOT NULL,
+    channel_id bigint NOT NULL,
+    day date NOT NULL,
+    messages integer NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, channel_id, day)
+);
+
+CREATE TABLE IF NOT EXISTS stats_hour_days (
+    guild_id bigint NOT NULL,
+    day date NOT NULL,
+    hour smallint NOT NULL,
+    messages integer NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, day, hour)
+);
+
+CREATE TABLE IF NOT EXISTS stats_user_days (
+    guild_id bigint NOT NULL,
+    user_id bigint NOT NULL,
+    day date NOT NULL,
+    messages integer NOT NULL DEFAULT 0,
+    commands integer NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, user_id, day)
+);
+
+CREATE TABLE IF NOT EXISTS stats_user_channel_days (
+    guild_id bigint NOT NULL,
+    user_id bigint NOT NULL,
+    channel_id bigint NOT NULL,
+    day date NOT NULL,
+    messages integer NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, user_id, channel_id, day)
+);
+
+CREATE TABLE IF NOT EXISTS stats_user_hour_days (
+    guild_id bigint NOT NULL,
+    user_id bigint NOT NULL,
+    day date NOT NULL,
+    hour smallint NOT NULL,
+    messages integer NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, user_id, day, hour)
+);
+
+CREATE TABLE IF NOT EXISTS stats_command_days (
+    guild_id bigint NOT NULL,
+    user_id bigint NOT NULL,
+    command text NOT NULL,
+    day date NOT NULL,
+    uses integer NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, user_id, command, day)
+);
+
+CREATE INDEX IF NOT EXISTS stats_user_days_guild_day_idx ON stats_user_days (guild_id, day);
+CREATE INDEX IF NOT EXISTS stats_channel_days_guild_day_idx ON stats_channel_days (guild_id, day);
+CREATE INDEX IF NOT EXISTS stats_user_channel_days_user_idx ON stats_user_channel_days (user_id);
+CREATE INDEX IF NOT EXISTS stats_user_hour_days_user_idx ON stats_user_hour_days (user_id);
+CREATE INDEX IF NOT EXISTS stats_command_days_user_idx ON stats_command_days (user_id);
+CREATE INDEX IF NOT EXISTS stats_user_days_user_idx ON stats_user_days (user_id);

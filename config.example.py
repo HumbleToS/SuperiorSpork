@@ -54,3 +54,6 @@ _test_api_token = ""
 API_TOKEN = _test_api_token if TESTING else _api_token
 API_HOST = "0.0.0.0"
 API_PORT = 8080
+
+# activity counts (numbers only, never message text) behind the developer insights; the flush interval in seconds
+STATS_FLUSH_SECONDS = 60
