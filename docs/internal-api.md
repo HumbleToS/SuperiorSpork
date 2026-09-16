@@ -5,7 +5,7 @@ dashboard is its only client. This file is the source of truth for both
 repos: the bot's handlers and the dashboard's zod schemas are both written
 from it, and a change here lands in both before it ships.
 
-Status: **draft (Phase 0)**. Finalized at the end of Phase 1.
+Status: **v1**, implemented in `exts/api.py` (routes, auth, authorization) and `exts/utils/api.py` (envelope, parsing, serializers). Tests: `tests/test_api.py`.
 
 ## Shape
 
@@ -64,7 +64,10 @@ Error:
 `message` is written for the admin and the dashboard shows it verbatim; the
 wording is the same the slash command would have replied with. `field` names
 the request field that failed when there is one. `problems` (a list of
-strings) is added on `not_ready`.
+strings) is added on `not_ready`; show those instead of `message`, which is
+phrased for Discord ("run `brainrot enable` again"). A refusal from the
+middle of a list update (`PUT`) also carries `data`: the list as it stands
+after the items that did apply.
 
 ### Error codes
 
@@ -89,14 +92,15 @@ Timestamps are ISO 8601 in UTC. Durations are integer seconds. Colours are
 
 ### `GET /health` *(no user)*
 
-For the Docker `HEALTHCHECK` and the dashboard's deep health route.
+For the Docker `HEALTHCHECK` (`compose.yaml` reads the token from the
+mounted `config.py`) and the dashboard's deep health route.
 
 ```json
 { "ready": true, "latency_ms": 41, "guilds": 12 }
 ```
 
 `503 unavailable` when the bot isn't ready or the latency isn't a finite
-number.
+number. Still needs the token: nothing on this server answers without it.
 
 ### `GET /app` *(no user)*
 
@@ -228,8 +232,10 @@ health panel.
 }
 ```
 
-`type` is one of `text`, `announcement`, `voice`, `stage`, `forum`, `media`.
-Threads are not listed. `assignable` is true when the role is below the bot's
+`type` is one of `text`, `announcement`, `voice`, `stage`, `forum`, `media`,
+sorted by category position then channel position. Threads are not listed
+(they follow their parent for watching; a watched thread still shows in the
+channels list with `type: "thread"`). `assignable` is true when the role is below the bot's
 top role and not managed — the ones the bot could actually hand out.
 `brainrot.problems` is exactly what `brainrot enable` would print
 (`readiness()`), against the current config.
@@ -281,12 +287,15 @@ first failure stops the run and returns its error with `field` set; fields
 before it stay applied. Response is the `GET` shape.
 
 Validation, same as the commands: `mute_mode: "role"` needs a
-`mute_role_id` that exists, isn't `@everyone`, and isn't managed;
-`mute_seconds` is `60..2419200` in whole minutes; `ladder_seconds` is 1–5
-steps each `1..2419200`; `warn_delete_seconds` is `0..600`;
-`modlog_channel_id` is a text channel or thread in the guild, or `null`.
-`enabled: true` runs `readiness()` and answers `409 not_ready` with
-`problems` when anything is missing.
+`mute_role_id` that exists, isn't `@everyone`, and isn't managed (when only
+`mute_mode` is sent, the stored role is kept; `mute_role_id` is ignored in
+timeout mode, as the command ignores it); `mute_seconds` is `60..2419200`
+in whole minutes; `ladder_seconds` is 1–5 steps each `60..2419200`;
+`warn_delete_seconds` is `0..600`; `modlog_channel_id` is a text channel or
+thread in the guild, or `null`. `enabled: true` runs `readiness()` and
+answers `409 not_ready` with `problems` when anything is missing. Unknown
+fields are `400 bad_request`. Setting a field to its current value is a
+no-op that logs nothing.
 
 Every applied field writes one `config` row to the action log and, when a mod
 log channel is set, posts one line there:
@@ -334,10 +343,12 @@ folded), so what comes back may differ from what was typed.
 ```
 
 `removed` is the set of default terms toggled off; `added` is the custom
-list. Diffed and applied through `terms remove` then `terms add`: dropping a
-term from `removed` lifts the removal, adding a default to `added` is a
-no-op. Validation: 3–40 characters after normalization, at most 100 custom
-terms, no duplicates of an active term. Response is the `GET` shape.
+list; either may be omitted to leave it as is. Diffed and applied through
+`terms remove` then `terms add` (removals first): dropping a term from
+`removed` lifts the removal, and a term in `added` that is already active is
+refused as a duplicate, exactly as the command refuses it. Validation: 3–40
+characters after normalization, at most 100 custom terms. Response is the
+`GET` shape; what comes back is normalized, so `Sybau` is stored as `sybau`.
 
 ### `GET /guilds/{id}/brainrot/allowlist` · `PUT`
 
@@ -368,16 +379,18 @@ field) and shown so the screen can explain who is exempt by default.
 { "role_ids": ["5"], "user_ids": ["77", "78"] }
 ```
 
-Diffed through `exempt remove` / `exempt add`. Each role must exist in the
-guild; each user must be a current member (cache, then one `fetch_member`).
-At most 50 of each kind.
+Diffed through `exempt remove` / `exempt add`; either list may be omitted
+to leave it as is. Each role must exist in the guild; each user must be a
+current member (cache, then one `fetch_member`, `404 not_found` with
+`field: "user_id"` otherwise). At most 50 of each kind.
 
 ### `GET /guilds/{id}/members/search?q=`
 
-For the exemptions and pardon pickers. Resolves from the member cache first
-(display name, username, or an exact ID), then one `query_members` gateway
-request for prefix matches. Needs no intent the bot doesn't already have.
-At most 10 results.
+For the exemptions and pardon pickers. Resolves from the member cache
+(display name, username, or an exact ID); the members intent keeps every
+guild fully chunked, so a gateway `query_members` is only sent for a guild
+whose cache is somehow partial. Needs no intent the bot doesn't already
+have. At most 10 results.
 
 ```json
 [ { "id": "77", "name": "jaden", "username": "jaden", "avatar": "https://...", "bot": false } ]
@@ -421,6 +434,7 @@ default 25.
     "avatar": "https://...",
     "in_guild": true,
     "heat": 3,
+    "max_heat": 5,
     "cooling_at": "2026-09-16T07:00:00+00:00",
     "repeat": true,
     "repeat_until": "2026-09-23T06:00:00+00:00",
@@ -436,8 +450,9 @@ default 25.
 `heat` has decay applied (`HeatEngine.decayed`), `cooling_at` is when the
 next point drops, `title` comes from the same `TIERS` table the leaderboard
 command uses, `rank` is the lifetime position (only when `lifetime_offenses
-> 0`), and `muted_until` is set only for a mute the bot itself applied.
-`name` and `avatar` are `null` when the user isn't cached.
+> 0`, ties share a rank), `repeat_until` and `muted_until` are `null` once
+they have passed, and `muted_until` is set only for a mute the bot itself
+applied. `name` and `avatar` are `null` when the user isn't cached.
 
 ### `POST /guilds/{id}/brainrot/pardon`
 
@@ -454,6 +469,10 @@ with `actor_user_id` = the acting user and `source: "dashboard"`.
 ```json
 { "user_id": "77", "heat": 0, "repeat": false, "lifted_mute": true }
 ```
+
+`amount` outside `0..5` is `422 invalid`; a user who isn't in the guild is
+`404 not_found`. The action row records `heat` (what's left) and
+`heat_added` (negative: what was taken off).
 
 Note the slash command is gated on Moderate Members; the dashboard as a
 whole is gated on Manage Server, so a Moderate-Members-only mod uses the

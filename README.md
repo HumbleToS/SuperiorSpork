@@ -66,6 +66,17 @@ Discord Premium Apps).
   `WHISPER_THREADS`, `MODELS_DIR`, `SKU_TIER_1`, `SKU_TIER_2`,
   `REPORT_CHANNEL_ID`, `PRIVACY_URL`, `TERMS_URL` — see `config.example.py`.
 
+## Internal API
+
+The dashboard at `sprok.umbleh.dev` talks to the bot over a small aiohttp
+API (`exts/api.py`) that only exists on the private `spork-internal` Docker
+network — no published port, no Traefik route. One bearer token
+(`API_TOKEN` in `config.py`; empty keeps the server off) and, per request,
+the acting Discord user's id, which the bot checks for Manage Server itself.
+Every write calls the same function the matching slash command calls, and
+an action log (`brainrot_actions`, numbers and ids only, 30 days) feeds the
+dashboard's activity view. The contract is `docs/internal-api.md`.
+
 ## Anti-brainrot
 
 An opt-in, per-server heat system for brainrot vocabulary (skibidi, gyatt,

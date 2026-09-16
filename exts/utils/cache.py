@@ -1,5 +1,6 @@
 import time
 from collections import OrderedDict
+from collections.abc import Hashable
 from typing import Any
 
 
@@ -9,9 +10,9 @@ class TTLCache:
     def __init__(self, *, ttl: float, max_size: int = 1024) -> None:
         self.ttl = ttl
         self.max_size = max_size
-        self._entries: OrderedDict[int, tuple[float, Any]] = OrderedDict()
+        self._entries: OrderedDict[Hashable, tuple[float, Any]] = OrderedDict()
 
-    def get(self, key: int) -> Any | None:
+    def get(self, key: Hashable) -> Any | None:
         entry = self._entries.get(key)
         if entry is None:
             return None
@@ -21,7 +22,7 @@ class TTLCache:
             return None
         return value
 
-    def set(self, key: int, value: Any) -> None:
+    def set(self, key: Hashable, value: Any) -> None:
         self._entries[key] = (time.monotonic(), value)
         self._entries.move_to_end(key)
         while len(self._entries) > self.max_size:

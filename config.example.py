@@ -47,3 +47,10 @@ HELP_PREFIX_MODE = "dm"
 HELP_DM_NOTE_SECONDS = 10  # the "Sent to your DMs!" note
 HELP_TEMP_SECONDS = 60  # in-channel help, when DMs are closed or the mode is "temp"
 DASHBOARD_URL = ""  # shown in help to Manage Server members once a dashboard exists; empty hides it
+
+# internal api for the dashboard: aiohttp on the private spork-internal network only; an empty token keeps it off
+_api_token = "token"
+_test_api_token = ""
+API_TOKEN = _test_api_token if TESTING else _api_token
+API_HOST = "0.0.0.0"
+API_PORT = 8080

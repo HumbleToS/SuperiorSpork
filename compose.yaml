@@ -13,6 +13,26 @@ services:
       - ./config.py:/app/config.py:ro
       - spork-logs:/app/logs
       - spork-models:/app/models
+    networks:
+      - default
+      - spork-internal
+    healthcheck:
+      # the internal api answers only with the token, which the mounted config.py already holds
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import sys, urllib.request, config;
+          token = getattr(config, "API_TOKEN", "");
+          port = getattr(config, "API_PORT", 8080);
+          sys.exit(0) if not token else None;
+          req = urllib.request.Request(f"http://127.0.0.1:{port}/internal/v1/health", headers={"Authorization": f"Bearer {token}"});
+          sys.exit(0 if urllib.request.urlopen(req, timeout=3).status == 200 else 1)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     logging:
       driver: json-file
       options:
@@ -47,3 +67,12 @@ volumes:
   spork-db-data:
   spork-logs:
   spork-models:
+
+networks:
+  # the dashboard joins this as an external network; internal means no route to the internet and no published ports
+  spork-internal:
+    name: spork-internal
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.104.0.0/24
