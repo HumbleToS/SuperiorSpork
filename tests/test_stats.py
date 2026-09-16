@@ -404,6 +404,8 @@ async def rig() -> SimpleNamespace:
     await bot.add_cog(cog)
     cog.flush.cancel()  # the loops are driven by hand here
     cog.cleanup.cancel()
+    bot._ready.set()  # what login would do; lets before_loop hooks run in the harness
+    await cog.before_flush()  # what the loop does once the bot is ready: read the opt-out set
 
     sent: list[dict] = []
     errors: list[BaseException] = []
@@ -503,6 +505,15 @@ async def test_hybrid_slash_use_is_counted_once(rig: SimpleNamespace) -> None:
         SimpleNamespace(guild_id=GUILD_ID, user=rig.guild.get_member(USER_ID)), command.app_command
     )
     assert rig.cog.counters.is_empty()
+
+
+async def test_nothing_is_counted_before_the_opt_out_set_is_loaded(rig: SimpleNamespace) -> None:
+    rig.cog._loaded = False
+    await rig.cog.on_message(rig.message())
+    assert rig.cog.counters.is_empty()
+    rig.store.disabled.add(GUILD_ID)
+    await rig.cog.before_flush()
+    assert rig.cog._loaded and not rig.cog.is_enabled(GUILD_ID)
 
 
 async def test_untracked_guilds_are_skipped(rig: SimpleNamespace) -> None:

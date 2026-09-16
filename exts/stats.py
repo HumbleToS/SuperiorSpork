@@ -31,10 +31,10 @@ class Stats(commands.Cog, description="Activity counts for this server, and the 
         self.store = StatsStore(bot.pool)
         self.counters = Counters()
         self.disabled: set[int] = set()
+        self._loaded = False  # the opt-out set comes from the database, which setup_hook prepares after cogs load
         self._lock = asyncio.Lock()  # a flush must never land after `stats off` deleted the server's rows
 
     async def cog_load(self) -> None:
-        self.disabled = await self.store.disabled_guilds()
         seconds = getattr(config, "STATS_FLUSH_SECONDS", DEFAULT_FLUSH_SECONDS)
         self.flush.change_interval(seconds=float(seconds) if isinstance(seconds, int | float) else DEFAULT_FLUSH_SECONDS)
         self.flush.start()
@@ -46,7 +46,7 @@ class Stats(commands.Cog, description="Activity counts for this server, and the 
         await self.write()  # whatever the last interval counted goes out with the process
 
     def tracked(self, guild_id: int) -> bool:
-        return guild_id not in self.disabled and self.bot.get_guild(guild_id) is not None
+        return self._loaded and guild_id not in self.disabled and self.bot.get_guild(guild_id) is not None
 
     # counting: the events only, never the text
 
@@ -107,6 +107,9 @@ class Stats(commands.Cog, description="Activity counts for this server, and the 
     @flush.before_loop
     async def before_flush(self) -> None:
         await self.bot.wait_until_ready()
+        if not self._loaded:
+            self.disabled = await self.store.disabled_guilds()
+            self._loaded = True
 
     @flush.error
     async def flush_error(self, error: BaseException) -> None:
