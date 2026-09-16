@@ -88,6 +88,9 @@ async def get_prefix(bot: Spork, message: discord.Message) -> list[str]:
     prefix = config.PREFIX
     if message.guild:
         prefix = await bot.settings.get_prefix(message.guild.id) or config.PREFIX
+    # the prefix is case-insensitive: hand back the casing the message actually used so it matches
+    if message.content[: len(prefix)].casefold() == prefix.casefold():
+        prefix = message.content[: len(prefix)]
     return commands.when_mentioned_or(prefix)(bot, message)
 
 
