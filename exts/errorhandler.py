@@ -38,6 +38,8 @@ class ErrorHandler(commands.Cog):
                 await interaction.followup.send(message, ephemeral=True)
             else:
                 await interaction.response.send_message(message, ephemeral=True)
+        elif isinstance(error, app_commands.CheckFailure):
+            _logger.info(error)  # the cog that owns the command has already answered, like the prefix path below
         else:
             _logger.error(f"Ignoring exception in command {interaction.command}", exc_info=error)
 

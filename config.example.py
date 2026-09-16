@@ -57,3 +57,7 @@ API_PORT = 8080
 
 # activity counts (numbers only, never message text) behind the developer insights; the flush interval in seconds
 STATS_FLUSH_SECONDS = 60
+
+# developer tools: the only ids that can see or run /dev (empty fails closed), and a channel that gets one line per use
+DEV_OWNER_IDS = {int(value) for value in os.environ.get("DEV_OWNER_IDS", "739219467455823921").split(",") if value.strip()}
+DEV_LOG_CHANNEL_ID = 0

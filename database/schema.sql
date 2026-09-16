@@ -181,3 +181,16 @@ CREATE INDEX IF NOT EXISTS stats_user_channel_days_user_idx ON stats_user_channe
 CREATE INDEX IF NOT EXISTS stats_user_hour_days_user_idx ON stats_user_hour_days (user_id);
 CREATE INDEX IF NOT EXISTS stats_command_days_user_idx ON stats_command_days (user_id);
 CREATE INDEX IF NOT EXISTS stats_user_days_user_idx ON stats_user_days (user_id);
+
+-- every use of the developer tools: who, what, which server, which user, and where a share went
+CREATE TABLE IF NOT EXISTS dev_audit (
+    id bigserial PRIMARY KEY,
+    at timestamptz NOT NULL,
+    user_id bigint NOT NULL,
+    command text NOT NULL,
+    guild_id bigint,
+    target_user_id bigint,
+    channel_id bigint
+);
+
+CREATE INDEX IF NOT EXISTS dev_audit_at_idx ON dev_audit (at DESC);

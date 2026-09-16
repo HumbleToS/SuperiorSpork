@@ -317,6 +317,8 @@ def build_index(bot: commands.Bot, ids: Mapping[str, int], prefix: str) -> HelpI
         grouped.setdefault(entry.category, []).append(entry)
     for app_command in bot.tree.walk_commands():
         if isinstance(app_command, app_commands.Command) and not isinstance(app_command, HybridAppCommand):
+            if (app_command.root_parent or app_command).extras.get("hidden"):
+                continue  # owner tooling that shouldn't be listed even for someone who can run it
             entry = build_app_entry(app_command, ids)
             grouped.setdefault(entry.category, []).append(entry)
 
