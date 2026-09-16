@@ -43,6 +43,7 @@ def entry(name: str, category: str = "General", **overrides) -> HelpEntry:
         "cooldown": None,
         "slash": True,
         "slash_id": None,
+        "prefix": "t,",
     }
     return HelpEntry(**(fields | overrides))
 
@@ -150,6 +151,8 @@ def test_mention_falls_back_to_plain_text_without_an_id() -> None:
     assert entry("brainrot score", slash_id=42).mention == "</brainrot score:42>"
     prefix_only = entry("cleanup", slash=False, usage="t,cleanup [amount]")
     assert prefix_only.mention == "t,cleanup" and prefix_only.shown_name == "t,cleanup"
+    spaced = entry("jsk dis", slash=False, usage="spk jsk dis <argument>", prefix="spk ")
+    assert spaced.shown_name == "spk jsk dis"  # a prefix with a space in it must not be split apart
 
 
 # the real cogs, offline

@@ -37,17 +37,18 @@ class HelpEntry:
     cooldown: str | None
     slash: bool
     slash_id: int | None
+    prefix: str  # the prefix in force where help was asked, for prefix-only commands
 
     @property
     def mention(self) -> str:
         # a clickable mention needs the root command's id; before the first sync it degrades to plain text
         if self.slash and self.slash_id is not None:
             return f"</{self.name}:{self.slash_id}>"
-        return f"/{self.name}" if self.slash else self.usage.split(" ")[0]
+        return self.shown_name
 
     @property
     def shown_name(self) -> str:
-        return f"/{self.name}" if self.slash else self.usage.split(" ")[0]
+        return f"/{self.name}" if self.slash else f"{self.prefix}{self.name}"
 
 
 @dataclass(frozen=True)
@@ -225,6 +226,7 @@ def build_app_entry(command: app_commands.Command[Any, ..., Any], ids: Mapping[s
         cooldown=None,
         slash=True,
         slash_id=ids.get(root.name),
+        prefix="/",
     )
 
 
@@ -299,6 +301,7 @@ def build_entry(command: commands.Command[Any, ..., Any], ids: Mapping[str, int]
         cooldown=cooldown_for(command),
         slash=slash,
         slash_id=ids.get(root.qualified_name) if slash else None,
+        prefix=prefix,
     )
 
 
