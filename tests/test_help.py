@@ -264,10 +264,11 @@ def names(index: HelpIndex) -> set[str]:
     return {e.name for e in index.entries}
 
 
-async def test_owner_sees_everything_including_owner_only(rig: SimpleNamespace) -> None:
+async def test_owner_sees_everything_except_owner_tooling(rig: SimpleNamespace) -> None:
+    # sync, jishaku, and /dev are hidden on purpose: never in help, never in the dashboard's command list
     index = await rig.cog.index_for(await rig.context(OWNER_ID))
-    assert [c.name for c in index.categories] == ["Brainrot", "Developer", "General", "Help"]
-    assert "sync" in names(index) and "brainrot config mode" in names(index) and "help" in names(index)
+    assert [c.name for c in index.categories] == ["Brainrot", "General", "Help"]
+    assert "sync" not in names(index) and "brainrot config mode" in names(index) and "help" in names(index)
     assert "brainrot" not in names(index) and "brainrot config" not in names(index)  # bare groups are not listed
     assert len(index.category("Brainrot").entries) == 26
 
@@ -314,8 +315,7 @@ async def test_entries_carry_usage_example_permissions_and_cooldown(rig: SimpleN
     assert (
         mode is not None and mode.example == "/brainrot config mode mode:timeout" and mode.permissions == ("Manage Server",)
     )
-    sync = index.entry("sync")
-    assert sync is not None and sync.permissions == ("Bot owner",)
+    assert index.entry("sync") is None  # hidden owner tooling
     help_entry = index.entry("help")
     assert help_entry is not None and help_entry.category == "Help" and help_entry.usage == "/help [command] [public]"
 
@@ -479,5 +479,5 @@ async def test_cog_blurbs_reach_the_landing_view(rig: SimpleNamespace) -> None:
     view = await rig.cog.view_for(await rig.context(OWNER_ID))
     landing = texts(view)[0]
     assert "**General** — Server, user, and bot info" in landing
-    assert "**Developer** — Owner tools" in landing
+    assert "Developer" not in landing
     assert "**Help** — This menu, and how to find any command" in landing

@@ -795,7 +795,7 @@ class Developer(commands.Cog, description="Owner tools"):
         )
         await self.open(interaction, view)
 
-    @commands.command()
+    @commands.command(hidden=True)
     @commands.guild_only()
     @commands.is_owner()
     async def sync(

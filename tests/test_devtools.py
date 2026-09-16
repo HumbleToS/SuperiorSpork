@@ -532,6 +532,8 @@ async def test_dev_is_user_install_only_and_hidden_from_help(rig: SimpleNamespac
 
     index = build_index(rig.bot, {}, "t,")
     assert not any(entry.name.startswith("dev") for entry in index.entries)
+    # the same index feeds the dashboard's command list, so the owner-only prefix command stays out of it too
+    assert rig.bot.get_command("sync").hidden and "Developer" not in [category.name for category in index.categories]
 
 
 async def test_every_entry_point_refuses_a_stranger(rig: SimpleNamespace, caplog: pytest.LogCaptureFixture) -> None:

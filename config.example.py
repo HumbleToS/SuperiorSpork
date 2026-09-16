@@ -16,6 +16,7 @@ PREFIX = _test_prefix if TESTING else _prefix
 
 os.environ["JISHAKU_NO_UNDERSCORE"] = "True"
 os.environ["JISHAKU_NO_DM_TRACEBACK"] = "True"
+os.environ["JISHAKU_HIDE"] = "True"  # owner tooling stays out of help and the dashboard's command list
 
 # voice recap module
 _anthropic_key = "key"
