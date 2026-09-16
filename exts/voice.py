@@ -187,14 +187,14 @@ class Voice(commands.Cog):
     @app_commands.describe(
         role="The role allowed to start and stop recordings",
         channel="Where finished recaps get posted",
-        retention_days="How long transcripts and recaps are kept (default 90)",
+        retention_days="How long transcripts and recaps are kept, in days (default 90; empty keeps the current value)",
     )
     async def setup(
         self,
         ctx: GuildContext,
         role: discord.Role,
         channel: discord.TextChannel,
-        retention_days: commands.Range[int, 1, 365] | None = None,
+        retention_days: commands.Range[int, 0, 365] = 0,
     ) -> None:
         """Configures recording for this server
 
@@ -204,10 +204,11 @@ class Voice(commands.Cog):
             The role allowed to start and stop recordings
         channel : discord.TextChannel
             Where finished recaps get posted
-        retention_days : int | None, optional
-            How long transcripts and recaps are kept, by default 90
+        retention_days : int, optional
+            How long transcripts and recaps are kept, by default 90; 0 or empty keeps the current value
         """
-        await self.bot.settings.set_voice_settings(ctx.guild.id, role.id, channel.id, retention_days)
+        # a defaulted Range keeps the slash option an integer; `Range | None` degrades to a string option
+        await self.bot.settings.set_voice_settings(ctx.guild.id, role.id, channel.id, retention_days or None)
         await ctx.send(
             f"Recording is set up! {role.mention} can record, recaps land in {channel.mention},"
             f" and sessions are kept for {plural(retention_days or DEFAULT_RETENTION_DAYS):day}.",
