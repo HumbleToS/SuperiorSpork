@@ -3,15 +3,21 @@ A discord bot made with discord.py that I like using!
 
 ## Running it
 
-The bot lives in Docker next to its own Postgres — see [DEPLOY.md](DEPLOY.md)
-for the full story. The short version:
+The bot lives in Docker next to its own Postgres (`compose.yaml`: the
+`superiorspork` container and `spork-db`, no published ports). First run:
 
 ```bash
-cp config.example.py config.py   # fill in TOKEN and the DSNs
+cp config.example.py config.py   # fill in TOKEN; point both DSNs at
+                                 # postgresql://spork:<password>@db:5432/spork
 chmod 600 config.py
-setfacl -m u:10001:r config.py
-docker compose up -d --build
+setfacl -m u:10001:r config.py   # the container runs as UID 10001
+POSTGRES_PASSWORD=<same password> docker compose up -d --build
 ```
+
+Postgres reads `POSTGRES_PASSWORD` only when its data volume is first
+created; after that a plain `docker compose up -d --build bot` deploys a new
+build, `docker compose logs -f bot` follows startup, and `docker compose stop`
+shuts down cleanly in a second or two.
 
 ## Config
 
