@@ -19,6 +19,12 @@ created; after that a plain `docker compose up -d --build bot` deploys a new
 build, `docker compose logs -f bot` follows startup, and `docker compose stop`
 shuts down cleanly in a second or two.
 
+The dashboard lives in `dashboard/` and is the `dashboard` service of the same
+compose file: copy `dashboard/.env.example` to `dashboard/.env`, fill it in,
+and `docker compose up -d --build dashboard`. Its checks run from
+`.github/workflows/dashboard.yml` whenever something under `dashboard/`
+changes.
+
 ## Config
 
 `config.py` is the single config/secrets file (gitignored, never in the

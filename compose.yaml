@@ -63,13 +63,63 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  dashboard:
+    build: ./dashboard
+    image: sprok-dashboard:latest
+    container_name: sprok-dashboard
+    restart: unless-stopped
+    init: true
+    env_file: ./dashboard/.env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      NEXT_TELEMETRY_DISABLED: "1"
+    networks:
+      - traefik-public
+      - spork-internal
+    labels:
+      traefik.enable: "true"
+      # two networks, so Traefik is told which one to reach us on
+      traefik.docker.network: traefik-public
+      traefik.http.routers.sprok.rule: Host(`sprok.umbleh.dev`)
+      traefik.http.routers.sprok.entrypoints: websecure
+      traefik.http.routers.sprok.tls: "true"
+      traefik.http.routers.sprok.tls.certresolver: letsencrypt
+      # app-csp-headers, not security-headers: the app ships its own nonce CSP with frame-ancestors 'none'
+      traefik.http.routers.sprok.middlewares: app-csp-headers@file,compress@file
+      traefik.http.routers.sprok-legal.rule: Host(`privacy.sprok.umbleh.dev`) || Host(`terms.sprok.umbleh.dev`)
+      traefik.http.routers.sprok-legal.entrypoints: websecure
+      traefik.http.routers.sprok-legal.tls: "true"
+      traefik.http.routers.sprok-legal.tls.certresolver: letsencrypt
+      traefik.http.routers.sprok-legal.middlewares: app-csp-headers@file,compress@file
+      traefik.http.services.sprok.loadbalancer.server.port: "3000"
+    healthcheck:
+      # shallow on purpose: the container is healthy when the process answers; the bot's state is /api/health/deep
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "require('http').get({host:'127.0.0.1',port:3000,path:'/api/health'},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   spork-db-data:
   spork-logs:
   spork-models:
 
 networks:
-  # the dashboard joins this as an external network; internal means no route to the internet and no published ports
+  # Traefik's network, owned by its own compose project; only the dashboard joins it
+  traefik-public:
+    external: true
+  # the bot and the dashboard meet here; internal means no route to the internet and no published ports
   spork-internal:
     name: spork-internal
     internal: true

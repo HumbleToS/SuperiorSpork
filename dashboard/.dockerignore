@@ -1,0 +1,17 @@
+.git
+.github
+.next
+node_modules
+Dockerfile
+docker-compose.yml
+.dockerignore
+.env
+.env.*
+!.env.example
+*.md
+scripts
+tests
+vitest.config.mts
+e2e
+playwright-report
+test-results
