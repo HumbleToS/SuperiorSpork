@@ -104,8 +104,8 @@ CREATE TABLE IF NOT EXISTS brainrot_actions (
 CREATE INDEX IF NOT EXISTS brainrot_actions_guild_idx ON brainrot_actions (guild_id, at DESC);
 
 -- activity counts for the developer insights and a future dashboard: numbers, ids, dates, and command names only;
--- never message content. Daily rows are pruned after 90 days; a server's rows go 7 days after the bot leaves it,
--- or the moment it runs `stats off`.
+-- never message content. Daily rows are kept for as long as a server keeps counts on; they go 7 days after the bot
+-- leaves it, or the moment it runs `stats off`.
 CREATE TABLE IF NOT EXISTS stats_guilds (
     guild_id bigint PRIMARY KEY,
     enabled boolean NOT NULL DEFAULT true,
@@ -181,6 +181,19 @@ CREATE INDEX IF NOT EXISTS stats_user_channel_days_user_idx ON stats_user_channe
 CREATE INDEX IF NOT EXISTS stats_user_hour_days_user_idx ON stats_user_hour_days (user_id);
 CREATE INDEX IF NOT EXISTS stats_command_days_user_idx ON stats_command_days (user_id);
 CREATE INDEX IF NOT EXISTS stats_user_days_user_idx ON stats_user_days (user_id);
+
+-- the lifetime message total behind whois ranks: one baseline per member from Discord's search index, with what the
+-- daily tables held for them at that moment, so the collector's later counts can be added on top without a new search
+CREATE TABLE IF NOT EXISTS stats_message_totals (
+    guild_id bigint NOT NULL,
+    user_id bigint NOT NULL,
+    total integer NOT NULL,
+    counted integer NOT NULL,
+    searched_at timestamptz NOT NULL,
+    PRIMARY KEY (guild_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS stats_message_totals_user_idx ON stats_message_totals (user_id);
 
 -- every use of the developer tools: who, what, which server, which user, and where a share went
 CREATE TABLE IF NOT EXISTS dev_audit (

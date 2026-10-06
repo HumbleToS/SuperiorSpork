@@ -24,10 +24,11 @@ from test_brainrot_cog import (
 
 from exts.stats import Stats
 from exts.utils.stats import (
+    BASELINE_DAYS,
     GRACE_DAYS,
     HOURS,
     MAX_COMMAND_LENGTH,
-    RETENTION_DAYS,
+    RANKS,
     TOP_LIMIT,
     Batch,
     ChannelCount,
@@ -38,11 +39,14 @@ from exts.utils.stats import (
     HourCount,
     JoinLeave,
     MemberRank,
+    MessageTotal,
+    Rank,
     StatsStore,
     day_span,
     fill_days,
     fill_hours,
     fill_join_leaves,
+    rank_for,
     started_within,
 )
 
@@ -122,6 +126,31 @@ def test_counters_forget_one_guild_and_cap_command_names() -> None:
 # pure helpers
 
 
+def test_pending_messages_count_one_member_in_one_server() -> None:
+    counters = Counters()
+    counters.record_message(1, 10, 100, at(TODAY, 9))
+    counters.record_message(1, 11, 100, at(TODAY, 21))
+    counters.record_message(1, 10, 101, at(TODAY, 9))
+    counters.record_message(2, 10, 100, at(TODAY, 9))
+    assert counters.pending_messages(1, 100) == 2 and counters.pending_messages(1, 101) == 1
+    assert counters.pending_messages(2, 100) == 1 and counters.pending_messages(3, 100) == 0
+    counters.drain()
+    assert counters.pending_messages(1, 100) == 0
+
+
+def test_rank_ladder_climbs_and_tops_out() -> None:
+    assert [floor for _, floor in RANKS] == sorted(floor for _, floor in RANKS) and RANKS[0][1] == 0
+    assert rank_for(0) == Rank("Touches Grass", 0, "Lurker", 100)
+    assert rank_for(99) == Rank("Touches Grass", 0, "Lurker", 100)
+    assert rank_for(100) == Rank("Lurker", 100, "Occasionally Online", 500)
+    assert rank_for(2_499).name == "Chronically Online" and rank_for(2_500).name == "No Life"
+    assert rank_for(10_000).name == "Legend"
+    assert rank_for(100_000) == Rank("Allergic to Sunlight", 100_000, "Vitamin D Deficient", 150_000)
+    assert rank_for(299_999).name == "Married to the Server"
+    assert rank_for(300_000) == Rank("Legally Part of the Furniture", 300_000) and rank_for(10**9).next_name is None
+    assert MessageTotal(1200, 40, at(TODAY)).estimate(55) == 1215 and MessageTotal(1200, 40, at(TODAY)).estimate(10) == 1200
+
+
 def test_day_span_and_fills() -> None:
     span = day_span(7, TODAY)
     assert span == DaySpan(datetime.date(2026, 9, 10), TODAY) and span.days == 7
@@ -168,7 +197,7 @@ STATS_TABLES = (
 
 @pytest.fixture
 async def store(pool) -> StatsStore:
-    await pool.execute(f"TRUNCATE {', '.join(STATS_TABLES)}")
+    await pool.execute(f"TRUNCATE {', '.join(STATS_TABLES)}, stats_message_totals")
     return StatsStore(pool)
 
 
@@ -251,16 +280,39 @@ async def test_departed_guilds_are_purged_after_the_grace_period(store: StatsSto
 
 
 @requires_db
-async def test_prune_keeps_the_retention_window(store: StatsStore) -> None:
-    await seed(store, days=RETENTION_DAYS + 5)
-    kept_from = TODAY - datetime.timedelta(days=RETENTION_DAYS)
+async def test_message_totals_round_trip_and_leave_with_the_server_or_the_person(store: StatsStore) -> None:
+    assert await store.message_total(1, 100) is None and await store.member_messages_total(1, 100) == 0
+    await seed(store)  # user 100 sends four a day for three days
+    assert await store.member_messages_total(1, 100) == 12 and await store.member_messages_total(1, 999) == 0
 
-    pruned = await store.prune(TODAY)
+    await store.set_message_total(1, 100, 1200, 12, at(TODAY))
+    await store.set_message_total(1, 101, 30, 3, at(TODAY))
+    await store.set_message_total(OTHER_GUILD, 100, 7, 0, at(TODAY))
+    assert await store.message_total(1, 100) == MessageTotal(1200, 12, at(TODAY))
+    await store.set_message_total(1, 100, 1300, 20, at(TODAY + datetime.timedelta(days=1)))
+    assert await store.message_total(1, 100) == MessageTotal(1300, 20, at(TODAY + datetime.timedelta(days=1)))
 
-    assert pruned > 0
-    assert await store.pool.fetchval("SELECT min(day) FROM stats_guild_days") == kept_from
-    assert await store.pool.fetchval("SELECT min(day) FROM stats_user_hour_days") == kept_from
-    assert await store.prune(TODAY) == 0
+    assert await store.purge_user(100) > 0  # a person's rows go everywhere
+    assert await store.message_total(1, 100) is None and await store.message_total(OTHER_GUILD, 100) is None
+    assert await store.message_total(1, 101) is not None
+    await store.set_enabled(1, False, at(TODAY))  # and a server's with the opt-out
+    assert await store.message_total(1, 101) is None
+
+
+@requires_db
+async def test_footprint_counts_rows_per_server_and_people_without_naming_them(store: StatsStore) -> None:
+    empty = await store.footprint()
+    assert empty.guilds == () and empty.servers == 0 and empty.people == 0 and empty.oldest_day is None
+
+    await seed(store)  # three days: 15 rows a day across the seven tables, two people
+    await seed(store, days=1, guild_id=OTHER_GUILD)  # 15 rows, plus the day row the recorded leave adds
+
+    footprint = await store.footprint()
+
+    assert [(entry.guild_id, entry.rows, entry.people) for entry in footprint.guilds] == [(1, 45, 2), (OTHER_GUILD, 16, 2)]
+    assert footprint.servers == 2 and footprint.people == 2  # the same two people in both servers count once
+    assert footprint.oldest_day == TODAY - datetime.timedelta(days=2)
+    assert [entry.guild_id for entry in (await store.footprint(limit=1)).guilds] == [1]
 
 
 @requires_db
@@ -352,6 +404,8 @@ class FakeStore:
         self.enabled_calls: list[tuple[int, bool]] = []
         self.left: dict[int, datetime.datetime] = {}
         self.present: list[int] = []
+        self.totals: dict[tuple[int, int], MessageTotal] = {}
+        self.counted: dict[tuple[int, int], int] = {}
 
     async def disabled_guilds(self) -> set[int]:
         return set(self.disabled)
@@ -381,8 +435,14 @@ class FakeStore:
     async def purge_departed(self, now: datetime.datetime, grace_days: int = GRACE_DAYS) -> list[int]:
         return []
 
-    async def prune(self, today: datetime.date, retention_days: int = RETENTION_DAYS) -> int:
-        return 0
+    async def message_total(self, guild_id: int, user_id: int) -> MessageTotal | None:
+        return self.totals.get((guild_id, user_id))
+
+    async def set_message_total(self, guild_id: int, user_id: int, total: int, counted: int, at) -> None:
+        self.totals[(guild_id, user_id)] = MessageTotal(total, counted, at)
+
+    async def member_messages_total(self, guild_id: int, user_id: int) -> int:
+        return self.counted.get((guild_id, user_id), 0)
 
 
 @pytest.fixture
@@ -574,3 +634,56 @@ async def test_leaving_a_guild_drops_pending_counts_and_starts_the_grace_period(
 
     await rig.cog.on_guild_join(rig.guild)
     assert rig.store.present == [GUILD_ID] and GUILD_ID not in rig.store.left
+
+
+# lifetime totals for whois: one search baseline, then the collector's counts on top
+
+
+async def test_lifetime_messages_searches_once_then_counts_on_top(
+    rig: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cog, guild, store = rig.cog, rig.guild, rig.cog.store
+    searches: list[list[tuple[str, str]]] = []
+    answer = {"total_results": 1200, "messages": [{"content": "never read"}], "doing_deep_historical_index": False}
+
+    async def request(route, *, params=None, **kwargs):
+        assert route.url.endswith(f"/guilds/{GUILD_ID}/messages/search")
+        searches.append(list(params))
+        return answer
+
+    monkeypatch.setattr(rig.bot.http, "request", request)
+    store.counted[(GUILD_ID, USER_ID)] = 40
+
+    assert await cog.lifetime_messages(guild, USER_ID) == 1200
+    assert searches == [[("author_id", str(USER_ID)), ("include_nsfw", "true"), ("limit", "1")]]
+    baseline = store.totals[(GUILD_ID, USER_ID)]
+    assert baseline.total == 1200 and baseline.counted == 40
+
+    store.counted[(GUILD_ID, USER_ID)] = 55  # flushed since
+    cog.counters.record_message(GUILD_ID, CHANNEL_ID, USER_ID, at(TODAY))  # and two still in memory
+    cog.counters.record_message(GUILD_ID, CHANNEL_ID, USER_ID, at(TODAY))
+    assert await cog.lifetime_messages(guild, USER_ID) == 1217 and len(searches) == 1
+
+    # a baseline past its month is refreshed with one search, and the counted mark moves with it
+    store.totals[(GUILD_ID, USER_ID)] = MessageTotal(
+        1200, 40, discord.utils.utcnow() - datetime.timedelta(days=BASELINE_DAYS + 1)
+    )
+    answer = answer | {"total_results": 1400}
+    assert await cog.lifetime_messages(guild, USER_ID) == 1400 and len(searches) == 2
+    assert store.totals[(GUILD_ID, USER_ID)].counted == 57
+
+    # an index that isn't ready is asked exactly once (no waiting in a public command) and the estimate stands in
+    answer = {"message": "Index not yet available", "code": 110000, "retry_after": 5}
+    store.totals[(GUILD_ID, USER_ID)] = MessageTotal(
+        1400, 57, discord.utils.utcnow() - datetime.timedelta(days=BASELINE_DAYS + 1)
+    )
+    assert await cog.lifetime_messages(guild, USER_ID) == 1400 and len(searches) == 3
+
+    async def refused(route, *, params=None, **kwargs):
+        raise discord.Forbidden(
+            SimpleNamespace(status=403, reason="Forbidden"), {"message": "Missing Access", "code": 50001}
+        )
+
+    monkeypatch.setattr(rig.bot.http, "request", refused)
+    assert await cog.lifetime_messages(guild, USER_ID) == 1400  # still the estimate
+    assert await cog.lifetime_messages(guild, OWNER_ID) is None  # nothing stored, nothing to show

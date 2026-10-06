@@ -23,12 +23,15 @@ from exts.utils.devtools import (
     AuditStore,
     Block,
     NotDevOwner,
+    TableSize,
     cached_role_counts,
     channel_blocks,
     colour_square,
     feature_names,
     guild_choices,
+    human_size,
     is_dev_owner,
+    lifetime_section,
     member_blocks,
     overview_sections,
     owner_ids,
@@ -36,14 +39,18 @@ from exts.utils.devtools import (
     parse_snowflake,
     render_page,
     role_blocks,
+    storage_sections,
     tally_members,
 )
 from exts.utils.help import build_index
+from exts.utils.search import SearchTotal, search_query
 from exts.utils.stats import (
     ChannelCount,
     CommandCount,
     DayCount,
+    Footprint,
     GuildActivity,
+    GuildFootprint,
     HourCount,
     JoinLeave,
     MemberActivity,
@@ -454,12 +461,23 @@ class FakeAudit:
         return tuple(SimpleNamespace(line=f"`{row['command']}`", **row) for row in reversed(self.rows[-limit:]))
 
 
+DEPARTED_GUILD_ID = BASE + 777
+
+
 class FakeStatsStore:
     def __init__(self) -> None:
         self.purged: list[tuple[int, int | None]] = []
 
     async def disabled_guilds(self) -> set[int]:
         return set()
+
+    async def footprint(self, limit: int = 8) -> Footprint:
+        return Footprint(
+            guilds=(GuildFootprint(GUILD_ID, 1200, 40), GuildFootprint(DEPARTED_GUILD_ID, 30, 1)),
+            servers=3,
+            people=42,
+            oldest_day=datetime.date(2026, 9, 16),
+        )
 
     async def purge_user(self, user_id: int, guild_id: int | None = None) -> int:
         self.purged.append((user_id, guild_id))
@@ -869,7 +887,21 @@ async def insights(rig: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> Sim
         )
 
     monkeypatch.setattr(rig.bot, "fetch_user", fetch_user)
-    return SimpleNamespace(rig=rig, store=store, renders=renders, fetched=fetched)
+
+    # the search endpoint: the first answer is a 202 "index not ready", every later one a total for the author
+    searches: list[tuple[str, list[tuple[str, str]]]] = []
+    not_ready = [True]
+
+    async def request(route, *, params=None, **kwargs):
+        assert route.method == "GET" and route.url.endswith("/messages/search") and not kwargs
+        searches.append((route.url, list(params)))
+        if not_ready and not_ready.pop():
+            return {"message": "Index not yet available. Try again later", "code": 110000, "retry_after": 0.001}
+        total = 35 if dict(params)["author_id"] == str(MOD_ID) else 0
+        return {"total_results": total, "messages": [{"content": "never read"}], "doing_deep_historical_index": False}
+
+    monkeypatch.setattr(rig.bot.http, "request", request)
+    return SimpleNamespace(rig=rig, store=store, renders=renders, fetched=fetched, searches=searches)
 
 
 GONE_ID = BASE + 4242
@@ -1021,3 +1053,145 @@ async def test_user_insights_includes_brainrot_when_the_cog_is_loaded(insights: 
         assert "### Anti-brainrot\n**Heat:** `3` · **Lifetime offenses:** `17`" in card_text(interaction.calls[1][2])
     finally:
         await rig.bot.remove_cog(cog.qualified_name)
+
+
+# lifetime counts: the search endpoint asked for totals only, cached, and never allowed to break the card
+
+
+def test_search_query_and_lifetime_section() -> None:
+    assert search_query(author_id=MOD_ID) == [("author_id", str(MOD_ID)), ("include_nsfw", "true"), ("limit", "1")]
+    assert lifetime_section(SearchTotal(1500)) == "### Lifetime\n**Messages:** `1,500` in this server"
+    assert lifetime_section(SearchTotal(0, indexing=True)) == (
+        "### Lifetime\n**Messages:** `0` in this server\n-# discord is still indexing this server's history"
+    )
+    assert (
+        lifetime_section("the search request failed")
+        == "### Lifetime\n**Messages:** unavailable — the search request failed"
+    )
+
+
+async def test_user_insights_pulls_the_lifetime_total_from_search_and_caches_it(insights: SimpleNamespace) -> None:
+    rig = insights.rig
+    interaction = FakeInteraction(OWNER_ID)
+    await rig.command("dev user insights").callback(rig.cog, interaction, None, str(MOD_ID), None, "30d")
+
+    text = card_text(interaction.calls[1][2])
+    assert "### Lifetime\n**Messages:** `35` in this server\n-# 30d" in text and "never read" not in text
+    # one search for the whole server, asked twice because the first answer was the 202; author only, one result
+    assert [url.rsplit("/guilds/", 1)[1] for url, _ in insights.searches] == [f"{GUILD_ID}/messages/search"] * 2
+    assert all(params == search_query(author_id=MOD_ID) for _, params in insights.searches)
+
+    again = FakeInteraction(OWNER_ID)
+    await rig.command("dev user insights").callback(rig.cog, again, None, str(MOD_ID), None, "30d")
+    assert len(insights.searches) == 2  # the quarter-hour cache
+    assert "**Messages:** `35` in this server" in card_text(again.calls[1][2])
+
+    elsewhere = FakeInteraction(OWNER_ID)
+    await rig.command("dev user insights").callback(rig.cog, elsewhere, None, str(MOD_ID), str(OTHER_GUILD_ID), "30d")
+    assert len(insights.searches) == 3 and insights.searches[-1][0].endswith(f"/guilds/{OTHER_GUILD_ID}/messages/search")
+
+
+async def test_user_insights_survives_search_being_refused_or_never_indexed(
+    insights: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig = insights.rig
+
+    async def refused(route, *, params=None, **kwargs):
+        raise discord.Forbidden(
+            SimpleNamespace(status=403, reason="Forbidden"), {"message": "Missing Access", "code": 50001}
+        )
+
+    monkeypatch.setattr(rig.bot.http, "request", refused)
+    interaction = FakeInteraction(OWNER_ID)
+    await rig.command("dev user insights").callback(rig.cog, interaction, None, str(MOD_ID), None, "30d")
+    text = card_text(interaction.calls[1][2])
+    assert "**Messages:** unavailable — I can't search here (needs Read Message History" in text
+    assert "**Message rank:** top 25%" in text  # the rest of the card is untouched
+
+    calls = []
+
+    async def never_ready(route, *, params=None, **kwargs):
+        calls.append(params)
+        return {"message": "Index not yet available. Try again later", "code": 110000, "retry_after": 0}
+
+    monkeypatch.setattr(rig.bot.http, "request", never_ready)
+    interaction = FakeInteraction(OWNER_ID)
+    await rig.command("dev user insights").callback(rig.cog, interaction, None, str(USER_ID), None, "30d")
+    assert "**Messages:** unavailable — the search index isn't ready for this server yet" in card_text(
+        interaction.calls[1][2]
+    )
+    assert len(calls) == 4  # the first ask plus three waits, then it gives up rather than hammering
+
+    async def broken(route, *, params=None, **kwargs):
+        raise discord.HTTPException(SimpleNamespace(status=500, reason="Server Error"), {"message": "boom", "code": 0})
+
+    monkeypatch.setattr(rig.bot.http, "request", broken)
+    interaction = FakeInteraction(OWNER_ID)
+    await rig.command("dev user insights").callback(rig.cog, interaction, None, str(USER_ID), None, "30d")
+    assert "**Messages:** unavailable — the search request failed" in card_text(interaction.calls[1][2])
+
+
+# the storage card
+
+
+def test_human_size_and_storage_sections() -> None:
+    assert [human_size(n) for n in (0, 512, 1024, 1536, 5 * 1024**2, 3 * 1024**3, 2048 * 1024**3)] == [
+        "0 B",
+        "512 B",
+        "1.0 KB",
+        "1.5 KB",
+        "5.0 MB",
+        "3.0 GB",
+        "2,048.0 GB",
+    ]
+    tables = (TableSize("stats_user_days", 1200, 900 * 1024), TableSize("guilds", 3, 16 * 1024))
+    footprint = Footprint(
+        guilds=(GuildFootprint(GUILD_ID, 1200, 40), GuildFootprint(DEPARTED_GUILD_ID, 30, 1)),
+        servers=3,
+        people=42,
+        oldest_day=datetime.date(2026, 9, 16),
+    )
+    database, counts = storage_sections(1536 * 1024, tables, footprint, {GUILD_ID: "Spork Lab"})
+    assert database == (
+        "### Database\n**On disk:** `1.5 MB` · **Rows:** `1,203` across 2 tables"
+        "\n`stats_user_days` · `1,200` rows · `900.0 KB`\n`guilds` · `3` rows · `16.0 KB`"
+    )
+    assert counts == (
+        "### Activity counts\n**Servers:** `3` · **People:** `42` · **Oldest day:** 2026-09-16"
+        f"\nSpork Lab · `1,200` rows · 40 people\n`{DEPARTED_GUILD_ID}` · `30` rows · 1 person\n+1 more servers"
+    )
+    _, empty = storage_sections(0, (), Footprint((), 0, 0, None), {})
+    assert empty == "### Activity counts\n**Servers:** `0` · **People:** `0` · **Oldest day:** none"
+
+
+async def test_storage_card_names_servers_but_no_person(rig: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_database_size(pool) -> int:
+        return 1536 * 1024
+
+    async def fake_table_sizes(pool) -> tuple[TableSize, ...]:
+        return (TableSize("stats_user_days", 1200, 900 * 1024), TableSize("dev_audit", 9, 16 * 1024))
+
+    monkeypatch.setattr("exts.dev.database_size", fake_database_size)
+    monkeypatch.setattr("exts.dev.table_sizes", fake_table_sizes)
+    interaction = FakeInteraction(OWNER_ID, None)  # from a DM, like most owner tooling
+    await rig.command("dev storage").callback(rig.cog, interaction)
+
+    kind, _, view, files, ephemeral = interaction.calls[1]
+    assert kind == "followup" and ephemeral and isinstance(view, TextView) and view.sensitive and files == []
+    text = card_text(view)
+    assert "### Database\n**On disk:** `1.5 MB` · **Rows:** `1,209` across 2 tables" in text
+    assert "`stats_user_days` · `1,200` rows · `900.0 KB`" in text
+    assert "**Servers:** `3` · **People:** `42` · **Oldest day:** 2026-09-16" in text
+    assert "Spork Lab · `1,200` rows · 40 people" in text and "left …0777 · `30` rows · 1 person" in text
+    assert "+1 more servers" in text and "nothing here names a person" in text
+    assert str(MOD_ID) not in text and str(USER_ID) not in text and str(OWNER_ID) not in text
+    assert rig.cog.audit.rows[-1] == {
+        "user_id": OWNER_ID,
+        "command": "dev storage",
+        "guild_id": None,
+        "target_user_id": None,
+        "channel_id": None,
+    }
+
+    stranger = FakeInteraction(USER_ID, None)
+    assert await rig.cog.interaction_check(stranger) is False

@@ -12,8 +12,8 @@ from discord.ext.commands.hybrid import HybridAppCommand
 
 import config
 
-from .utils.stats import DEFAULT_FLUSH_SECONDS, GRACE_DAYS, RETENTION_DAYS, Counters, StatsStore
-from .utils.wording import plural
+from .utils.search import search_total
+from .utils.stats import BASELINE_DAYS, DEFAULT_FLUSH_SECONDS, GRACE_DAYS, Counters, StatsStore
 
 if TYPE_CHECKING:
     from bot import Spork
@@ -115,7 +115,7 @@ class Stats(commands.Cog, description="Activity counts for this server, and the 
     async def flush_error(self, error: BaseException) -> None:
         _logger.error("stats flush loop errored", exc_info=error)
 
-    # retention, and servers the bot has left
+    # servers the bot has left; counts are otherwise kept until a server turns them off
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild) -> None:
@@ -138,9 +138,6 @@ class Stats(commands.Cog, description="Activity counts for this server, and the 
         purged = await self.store.purge_departed(now)
         if purged:
             _logger.info(f"Stats cleanup purged {len(purged)} departed guilds")
-        pruned = await self.store.prune(now.date(), RETENTION_DAYS)
-        if pruned:
-            _logger.info(f"Stats cleanup removed {pruned} rows older than {RETENTION_DAYS} days")
 
     @cleanup.before_loop
     async def before_cleanup(self) -> None:
@@ -164,6 +161,28 @@ class Stats(commands.Cog, description="Activity counts for this server, and the 
                 self.counters.forget_guild(guild_id)
             await self.store.set_enabled(guild_id, enabled, discord.utils.utcnow())
         _logger.info(f"stats {'on' if enabled else 'off'} for guild {guild_id}")
+
+    async def lifetime_messages(self, guild: discord.Guild, user_id: int) -> int | None:
+        """A member's lifetime message count: one search-index baseline, then whatever this cog counted since.
+
+        The baseline is one request per member per month at most; a search that is refused or not ready falls back
+        to the stored estimate, or None when there is nothing to show yet.
+        """
+        now = discord.utils.utcnow()
+        stored = await self.store.message_total(guild.id, user_id)
+        counted = await self.store.member_messages_total(guild.id, user_id)
+        counted += self.counters.pending_messages(guild.id, user_id)
+        if stored is not None and now - stored.searched_at < datetime.timedelta(days=BASELINE_DAYS):
+            return stored.estimate(counted)
+        try:
+            found = await search_total(self.bot.http, guild.id, user_id, waits=0)  # whois won't wait on an index
+        except discord.HTTPException as exc:
+            _logger.debug(f"message search failed for guild {guild.id}", exc_info=exc)
+            found = None
+        if found is None:
+            return stored.estimate(counted) if stored is not None else None
+        await self.store.set_message_total(guild.id, user_id, found.total, counted, now)
+        return found.total
 
     # commands
 
@@ -194,8 +213,8 @@ class Stats(commands.Cog, description="Activity counts for this server, and the 
             return
         await self.set_enabled(ctx.guild.id, False)
         await ctx.send(
-            f"Activity counts are off and everything stored for this server is deleted. That covered the last"
-            f" {plural(RETENTION_DAYS):day} at most — only numbers, never messages. `stats on` brings them back.",
+            "Activity counts are off and everything stored for this server is deleted, back to the day tracking"
+            " began — only numbers, never messages. `stats on` brings them back.",
             ephemeral=True,
         )
 

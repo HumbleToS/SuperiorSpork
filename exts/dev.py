@@ -21,20 +21,25 @@ from .utils.devtools import (
     Block,
     cached_role_counts,
     channel_blocks,
+    database_size,
     dev_only,
     guild_badge,
     guild_choices,
     is_dev_owner,
+    lifetime_section,
     member_blocks,
     overview_sections,
     paginate_blocks,
     parse_snowflake,
     render_page,
     role_blocks,
+    storage_sections,
+    table_sizes,
     tally_members,
 )
 from .utils.embeds import pastel_color
 from .utils.layouts import SporkLayout, graphics_gallery
+from .utils.search import SearchTotal, search_total
 from .utils.stats import day_span
 from .utils.time import ts
 from .utils.wording import plural
@@ -54,6 +59,7 @@ CONFIRM_TIMEOUT = 60.0
 ROLE_COUNTS_TTL = 300  # role member counts are one api call per server; five minutes is plenty for a viewer
 RENDER_TTL = 300  # a rendered chart is reused for shares and repeat looks
 PROFILE_TTL = 900  # fetched user profiles (banner, accent), as in whois
+LIFETIME_TTL = 900  # lifetime counts come from discord's search index; a quarter hour between looks is plenty
 CHART_NAME = "insights.png"
 Section = Literal["overview", "channels", "members", "roles"]
 SECTIONS: tuple[tuple[Section, str], ...] = (
@@ -388,6 +394,7 @@ class Developer(commands.Cog, description="Owner tools"):
         self._role_counts = TTLCache(ttl=ROLE_COUNTS_TTL)
         self._renders = TTLCache(ttl=RENDER_TTL, max_size=32)  # ~250 KB a chart; a few dozen is plenty
         self._profiles = TTLCache(ttl=PROFILE_TTL)
+        self._lifetimes = TTLCache(ttl=LIFETIME_TTL)
 
     # every app command in this cog, every component, and every autocomplete answers to the same allowlist
 
@@ -508,6 +515,26 @@ class Developer(commands.Cog, description="Owner tools"):
             # a deleted channel keeps a short, distinct label that survives the chart's truncation
             names[channel_id] = f"#{channel.name}" if channel is not None else f"deleted …{str(channel_id)[-4:]}"
         return names
+
+    # lifetime counts: discord's search index, one request, read for its total only
+
+    async def lifetime(self, guild: discord.Guild, user_id: int) -> SearchTotal | str:
+        """A member's lifetime message count from the search index, or the reason there is none to show."""
+        key = (guild.id, user_id)
+        cached = self._lifetimes.get(key)
+        if isinstance(cached, SearchTotal):
+            return cached
+        try:
+            found = await search_total(self.bot.http, guild.id, user_id)
+        except discord.Forbidden:
+            return "I can't search here (needs Read Message History and the message content intent)"
+        except discord.HTTPException as exc:
+            _logger.warning(f"message search failed for guild {guild.id}", exc_info=exc)
+            return "the search request failed"
+        if found is None:
+            return "the search index isn't ready for this server yet, try again in a minute"
+        self._lifetimes.set(key, found)
+        return found
 
     def tracking_line(self, guild: discord.Guild, tracking_since: datetime.datetime | None) -> str:
         stats = self.stats()
@@ -718,7 +745,8 @@ class Developer(commands.Cog, description="Owner tools"):
             membership += f"\n**Message rank:** top {rank.top_percent:.0f}% (#{rank.rank:,} of {rank.ranked:,}, `{rank.messages:,}` messages)"
         else:
             membership += f"\n**Message rank:** no messages in the last {RANGE_DAYS[days]} days"
-        sections = [f"### Profile\n{profile}", f"### In {guild_name}\n{membership}"]
+        lifetime = lifetime_section(await self.lifetime(target, user.id))
+        sections = [f"### Profile\n{profile}", f"### In {guild_name}\n{membership}", lifetime]
         brainrot = self.brainrot()
         if brainrot is not None:
             state = await brainrot.store.get_state(target.id, user.id)
@@ -754,6 +782,37 @@ class Developer(commands.Cog, description="Owner tools"):
             f"{plural(len(entries)):entry|entries} • newest first",
             invoker_id=interaction.user.id,
             subject="the dev audit log",
+            subject_guild_id=None,
+            sensitive=True,
+            accent=pastel_color(interaction.user.id),
+        )
+        await self.open(interaction, view)
+
+    @dev.command(name="storage")
+    @dev_only()
+    async def dev_storage(self, interaction: discord.Interaction) -> None:
+        """How much is stored, by table, and which servers' activity counts it mostly is"""
+        stats = self.stats()
+        if stats is None:
+            await respond(interaction, "The stats module isn't loaded.")
+            return
+        await interaction.response.defer(ephemeral=True)
+        await self.record(interaction, "dev storage", guild_id=None)
+        on_disk = await database_size(self.bot.pool)
+        tables = await table_sizes(self.bot.pool)
+        footprint = await stats.store.footprint()
+        names: dict[int, str] = {}
+        for entry in footprint.guilds:
+            guild = self.bot.get_guild(entry.guild_id)
+            names[entry.guild_id] = (
+                discord.utils.escape_markdown(guild.name) if guild is not None else f"left …{str(entry.guild_id)[-4:]}"
+            )
+        view = TextView(
+            self,
+            storage_sections(on_disk, tables, footprint, names),
+            "numbers only • nothing here names a person",
+            invoker_id=interaction.user.id,
+            subject="the storage overview",
             subject_guild_id=None,
             sensitive=True,
             accent=pastel_color(interaction.user.id),

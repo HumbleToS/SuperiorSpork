@@ -19,12 +19,16 @@ if TYPE_CHECKING:
 
     import asyncpg
 
+    from .search import SearchTotal
+    from .stats import Footprint
+
 DEFAULT_OWNER_IDS = frozenset({739219467455823921})
 NOT_AVAILABLE = "Not available."
 PAGE_CHARS = 3000  # body budget per page; a whole view may carry 4000 characters across its text items
 MEMBERS_PER_GROUP = 15
 THREADS_PER_CHANNEL = 3
 AUDIT_LIMIT = 25
+STORAGE_GUILDS = 10  # servers named on the storage card
 CHANNEL_ICONS: dict[discord.ChannelType, str] = {
     discord.ChannelType.text: "#",
     discord.ChannelType.news: "📢",
@@ -169,6 +173,83 @@ class AuditStore:
             )
             for row in rows
         )
+
+
+# lifetime message counts: discord's search index, asked for totals only
+
+
+def lifetime_section(counts: SearchTotal | str) -> str:
+    """The card section: the total, or the reason there is none to show."""
+    if isinstance(counts, str):
+        return f"### Lifetime\n**Messages:** unavailable — {counts}"
+    text = f"### Lifetime\n**Messages:** `{counts.total:,}` in this server"
+    if counts.indexing:
+        text += "\n-# discord is still indexing this server's history"
+    return text
+
+
+# the storage card: table sizes from the catalog, and the stats footprint per server
+
+
+@dataclass(frozen=True)
+class TableSize:
+    name: str
+    rows: int
+    bytes: int
+
+
+def _plain_table_name(name: str) -> bool:
+    return name.isascii() and name.replace("_", "").isalnum() and name == name.lower()
+
+
+async def database_size(pool: asyncpg.Pool) -> int:
+    return int(await pool.fetchval("SELECT pg_database_size(current_database())"))
+
+
+async def table_sizes(pool: asyncpg.Pool) -> tuple[TableSize, ...]:
+    """Exact row counts and on-disk size for every table in the schema, largest first."""
+    names = await pool.fetch("SELECT tablename FROM pg_tables WHERE schemaname = current_schema() ORDER BY tablename")
+    sizes: list[TableSize] = []
+    for row in names:
+        name = row["tablename"]
+        if not _plain_table_name(name):
+            continue  # the names come from the catalog, and only these plain ones are interpolated below
+        rows = await pool.fetchval(f"SELECT count(*) FROM {name}")
+        size = await pool.fetchval("SELECT pg_total_relation_size(quote_ident($1)::regclass)", name)
+        sizes.append(TableSize(name, int(rows), int(size)))
+    return tuple(sorted(sizes, key=lambda table: (-table.bytes, table.name)))
+
+
+def human_size(size: int) -> str:
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            return f"{value:,.0f} {unit}" if unit == "B" else f"{value:,.1f} {unit}"
+        value /= 1024
+    return f"{value:,.1f} GB"
+
+
+def storage_sections(
+    database_bytes: int, tables: Sequence[TableSize], footprint: Footprint, names: Mapping[int, str]
+) -> list[str]:
+    """Two sections: what the database holds by table, and whose activity counts make up the bulk of it."""
+    rows = sum(table.rows for table in tables)
+    lines = [
+        f"### Database\n**On disk:** `{human_size(database_bytes)}` · **Rows:** `{rows:,}` across"
+        f" {plural(len(tables)):table}"
+    ]
+    lines.extend(f"`{table.name}` · `{table.rows:,}` rows · `{human_size(table.bytes)}`" for table in tables)
+    oldest = f"{footprint.oldest_day:%Y-%m-%d}" if footprint.oldest_day is not None else "none"
+    counts = [
+        f"### Activity counts\n**Servers:** `{footprint.servers:,}` · **People:** `{footprint.people:,}`"
+        f" · **Oldest day:** {oldest}"
+    ]
+    for guild in footprint.guilds:
+        name = names.get(guild.guild_id, f"`{guild.guild_id}`")
+        counts.append(f"{name} · `{guild.rows:,}` rows · {plural(guild.people):person|people}")
+    if footprint.servers > len(footprint.guilds):
+        counts.append(f"+{footprint.servers - len(footprint.guilds)} more servers")
+    return ["\n".join(lines), "\n".join(counts)]
 
 
 # the mini server viewer: pure builders that turn a guild into blocks, and a paginator that never cuts a line

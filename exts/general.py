@@ -5,7 +5,7 @@ import logging
 import os
 import re
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import discord
 import psutil
@@ -21,6 +21,7 @@ from .utils.embeds import SporkEmbed, pastel_color
 from .utils.emojis import Status
 from .utils.guilds import GuildGraphics
 from .utils.layouts import SporkLayout, graphics_gallery
+from .utils.stats import rank_for
 from .utils.time import how_old, ts
 from .utils.wording import plural
 
@@ -29,9 +30,35 @@ if TYPE_CHECKING:
 
     from bot import Spork
 
+    from .stats import Stats
     from .utils.context import GuildContext
 
 _logger = logging.getLogger(__name__)
+
+# profile badges by public flag, in the order the Discord profile shows them;
+# internal flags (spammer, team_user) stay out
+BADGES: dict[str, str] = {
+    "staff": "Discord Staff",
+    "partner": "Partnered Server Owner",
+    "hypesquad": "HypeSquad Events",
+    "bug_hunter": "Discord Bug Hunter",
+    "bug_hunter_level_2": "Discord Bug Hunter Gold",
+    "hypesquad_bravery": "HypeSquad Bravery",
+    "hypesquad_brilliance": "HypeSquad Brilliance",
+    "hypesquad_balance": "HypeSquad Balance",
+    "early_supporter": "Early Supporter",
+    "early_verified_bot_developer": "Early Verified Bot Developer",
+    "discord_certified_moderator": "Moderator Programs Alumni",
+    "active_developer": "Active Developer",
+    "verified_bot": "Verified Bot",
+    "bot_http_interactions": "Supports Commands",
+    "system": "System",
+}
+
+
+def badges(flags: discord.PublicUserFlags) -> list[str]:
+    """The badge names a user's public flags earn, in profile order."""
+    return [name for flag, name in BADGES.items() if getattr(flags, flag)]
 
 
 class General(commands.Cog, description="Server, user, and bot info"):
@@ -169,6 +196,21 @@ class General(commands.Cog, description="Server, user, and bot info"):
         items.append(ui.TextDisplay(f"### Registered\n{format_date(user.created_at)}"))
         if isinstance(user, discord.Member) and user.premium_since is not None:
             items.append(ui.TextDisplay(f"### Boosting Since\n{format_date(user.premium_since)}"))
+
+        earned = badges(user.public_flags)
+        if earned:
+            items.append(ui.TextDisplay(f"### Badges\n{', '.join(earned)}"))
+
+        stats = self.bot.get_cog("Stats")
+        if isinstance(user, discord.Member) and not user.bot and stats is not None:
+            total = await cast("Stats", stats).lifetime_messages(ctx.guild, user.id)
+            if total is not None:
+                rank = rank_for(total)
+                if rank.next_name is not None and rank.next_floor is not None:
+                    climb = f"╰ `{rank.next_floor - total:,}` more to {rank.next_name}"
+                else:
+                    climb = "╰ top of the ladder"
+                items.append(ui.TextDisplay(f"### Rank\n**{rank.name}** · `{total:,}` messages here\n{climb}"))
 
         if roles:
             items.append(ui.TextDisplay(f"### Roles\n{', '.join(roles) if len(roles) < 15 else f'{len(roles)} roles'}"))
@@ -363,9 +405,11 @@ class General(commands.Cog, description="Server, user, and bot info"):
                 " retention window (90 days unless changed). In servers that turn on anti-brainrot, messages in"
                 " the opted-in channels are checked against a wordlist; only heat numbers and counters are stored,"
                 " never the text. Every server also gets activity counts — messages, joins, leaves, and commands per"
-                " day, by channel and by member — as numbers only, never text, kept for 90 days; the developer can"
-                " see them, along with server and member metadata, for support and debugging, and every such look"
-                " is logged. Beyond that: per-server settings and prefixes."
+                " day, by channel and by member — as numbers only, never text, kept until the server turns them off"
+                " with `stats off`. `whois` shows a member's lifetime message count and rank: one baseline from"
+                " Discord's own search index, kept up to date from those counts. The developer can see the counts,"
+                " along with server and member metadata, for support and debugging, and every such look is logged."
+                " Beyond that: per-server settings and prefixes."
             ),
             ui.TextDisplay(
                 "### How to delete"

@@ -115,11 +115,15 @@ commands per day, by channel, by hour (UTC), and by member — numbers only,
 never message text (the message event is counted, the content is never read).
 Counts accumulate in memory and are written in one batched upsert a minute
 (`STATS_FLUSH_SECONDS`) and on shutdown; nothing is written per message and
-nothing is ever backfilled from history. Daily rows live 90 days; a server's
-rows go seven days after the bot leaves it (in case the kick was a mistake),
-or immediately with `stats off` (Manage Server), which also stops collection;
-`stats on` starts fresh. The query service in `exts/utils/stats.py` returns
-plain dataclasses, so a dashboard can reuse it.
+nothing is ever backfilled from history. Rows are kept for as long as the
+server keeps counts on: they go seven days after the bot leaves a server (in
+case the kick was a mistake), or immediately with `stats off` (Manage Server),
+which also stops collection; `stats on` starts fresh. The query service in `exts/utils/stats.py` returns
+plain dataclasses, so a dashboard can reuse it. `whois` shows a member's lifetime
+message count and rank on the same counts: one baseline per member from Discord's
+guild message search (refreshed a month later at the earliest), with everything
+the collector has counted since added on top, so a look costs no request at all
+most of the time.
 
 ## Developer tools
 

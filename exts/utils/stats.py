@@ -10,12 +10,29 @@ if TYPE_CHECKING:
 
     import asyncpg
 
-RETENTION_DAYS = 90
 GRACE_DAYS = 7  # a departed server's counts survive this long, in case the kick was an accident
+BASELINE_DAYS = 30  # a whois baseline from the search index is trusted this long before one new search refreshes it
 DEFAULT_FLUSH_SECONDS = 60
 TOP_LIMIT = 8
 MAX_COMMAND_LENGTH = 100
 HOURS = 24
+# the whois ladder: a name and the lifetime message count that earns it, lowest first
+RANKS: tuple[tuple[str, int], ...] = (
+    ("Touches Grass", 0),
+    ("Lurker", 100),
+    ("Occasionally Online", 500),
+    ("Chronically Online", 1_000),
+    ("No Life", 2_500),
+    ("Keyboard Warrior", 5_000),
+    ("Legend", 10_000),
+    ("Terminally Online", 25_000),
+    ("Basement Dweller", 50_000),
+    ("Allergic to Sunlight", 100_000),
+    ("Vitamin D Deficient", 150_000),
+    ("Has Not Blinked Since 2019", 200_000),
+    ("Married to the Server", 250_000),
+    ("Legally Part of the Furniture", 300_000),
+)
 
 MessageKey = tuple[int, int, int, datetime.date, int]  # guild, channel, user, day, hour
 DayKey = tuple[int, datetime.date]  # guild, day
@@ -83,6 +100,10 @@ class Counters:
 
     def record_command(self, guild_id: int, user_id: int, command: str, at: datetime.datetime) -> None:
         self.commands[(guild_id, user_id, command[:MAX_COMMAND_LENGTH], _utc(at).date())] += 1
+
+    def pending_messages(self, guild_id: int, user_id: int) -> int:
+        """Messages counted for one member since the last flush."""
+        return sum(count for (guild, _, user, _, _), count in self.messages.items() if guild == guild_id and user == user_id)
 
     def forget_guild(self, guild_id: int) -> None:
         for counter in (self.messages, self.joins, self.leaves, self.commands):
@@ -225,6 +246,56 @@ class MemberActivity:
 # pure helpers
 
 
+@dataclass(frozen=True)
+class MessageTotal:
+    """A member's baseline from the search index, and what the daily tables held for them when it was taken."""
+
+    total: int
+    counted: int
+    searched_at: datetime.datetime
+
+    def estimate(self, counted_now: int) -> int:
+        return self.total + max(0, counted_now - self.counted)
+
+
+@dataclass(frozen=True)
+class Rank:
+    name: str
+    floor: int
+    next_name: str | None = None
+    next_floor: int | None = None
+
+
+def rank_for(total: int) -> Rank:
+    """The ladder rung a lifetime message count earns, and the next one up."""
+    index = 0
+    for position, (_, floor) in enumerate(RANKS):
+        if total >= floor:
+            index = position
+    name, floor = RANKS[index]
+    if index + 1 < len(RANKS):
+        next_name, next_floor = RANKS[index + 1]
+        return Rank(name, floor, next_name, next_floor)
+    return Rank(name, floor)
+
+
+@dataclass(frozen=True)
+class GuildFootprint:
+    guild_id: int
+    rows: int
+    people: int
+
+
+@dataclass(frozen=True)
+class Footprint:
+    """How much the activity tables hold: the servers with the most rows, and the totals behind them."""
+
+    guilds: tuple[GuildFootprint, ...]
+    servers: int
+    people: int
+    oldest_day: datetime.date | None
+
+
 def day_span(days: int, today: datetime.date) -> DaySpan:
     """The last `days` days ending today, inclusive."""
     days = max(1, days)
@@ -260,7 +331,9 @@ _DAILY_TABLES = (
     "stats_user_hour_days",
     "stats_command_days",
 )
-_USER_TABLES = ("stats_user_days", "stats_user_channel_days", "stats_user_hour_days", "stats_command_days")
+_TOTALS_TABLE = "stats_message_totals"
+_GUILD_TABLES = (*_DAILY_TABLES, _TOTALS_TABLE)  # everything keyed by server, for the opt-out and the departed sweep
+_USER_TABLES = ("stats_user_days", "stats_user_channel_days", "stats_user_hour_days", "stats_command_days", _TOTALS_TABLE)
 
 
 class StatsStore:
@@ -331,7 +404,7 @@ class StatsStore:
         """Turning a server off also deletes everything stored for it; turning it on starts a fresh tracking date."""
         async with self.pool.acquire() as connection, connection.transaction():
             if not enabled:
-                for table in _DAILY_TABLES:
+                for table in _GUILD_TABLES:
                     # table names are interpolated, which is safe only because they come from the tuples above
                     await connection.execute(f"DELETE FROM {table} WHERE guild_id = $1", guild_id)
             await connection.execute(
@@ -369,7 +442,7 @@ class StatsStore:
 
     async def purge_guild(self, guild_id: int) -> None:
         async with self.pool.acquire() as connection, connection.transaction():
-            for table in (*_DAILY_TABLES, "stats_guilds"):
+            for table in (*_GUILD_TABLES, "stats_guilds"):
                 await connection.execute(f"DELETE FROM {table} WHERE guild_id = $1", guild_id)
 
     async def purge_user(self, user_id: int, guild_id: int | None = None) -> int:
@@ -388,13 +461,60 @@ class StatsStore:
                 deleted += int(status.rsplit(" ", 1)[-1])
         return deleted
 
-    async def prune(self, today: datetime.date, retention_days: int = RETENTION_DAYS) -> int:
-        cutoff = today - datetime.timedelta(days=retention_days)
-        deleted = 0
-        for table in _DAILY_TABLES:
-            status = await self.pool.execute(f"DELETE FROM {table} WHERE day < $1", cutoff)
-            deleted += int(status.rsplit(" ", 1)[-1])
-        return deleted
+    # lifetime totals behind whois ranks: one search baseline per member, refreshed rarely, counted on top of
+
+    async def message_total(self, guild_id: int, user_id: int) -> MessageTotal | None:
+        row = await self.pool.fetchrow(
+            f"SELECT total, counted, searched_at FROM {_TOTALS_TABLE} WHERE guild_id = $1 AND user_id = $2",
+            guild_id,
+            user_id,
+        )
+        return MessageTotal(row["total"], row["counted"], row["searched_at"]) if row is not None else None
+
+    async def set_message_total(self, guild_id: int, user_id: int, total: int, counted: int, at: datetime.datetime) -> None:
+        await self.pool.execute(
+            f"INSERT INTO {_TOTALS_TABLE} (guild_id, user_id, total, counted, searched_at) VALUES ($1, $2, $3, $4, $5)"
+            " ON CONFLICT (guild_id, user_id) DO UPDATE SET total = $3, counted = $4, searched_at = $5",
+            guild_id,
+            user_id,
+            total,
+            counted,
+            at,
+        )
+
+    async def member_messages_total(self, guild_id: int, user_id: int) -> int:
+        """Every message the collector has counted for one member of one server, flushed so far."""
+        total = await self.pool.fetchval(
+            "SELECT coalesce(sum(messages), 0) FROM stats_user_days WHERE guild_id = $1 AND user_id = $2",
+            guild_id,
+            user_id,
+        )
+        return int(total)
+
+    # what is stored, and for whom
+
+    async def footprint(self, limit: int = TOP_LIMIT) -> Footprint:
+        """Rows per server across every daily table, with how many people each covers, largest first."""
+        per_table = " UNION ALL ".join(
+            f"SELECT guild_id, count(*) AS n FROM {table} GROUP BY guild_id" for table in _GUILD_TABLES
+        )
+        rows = await self.pool.fetch(
+            f"SELECT counted.guild_id, sum(counted.n)::bigint AS rows, coalesce(people.people, 0)::bigint AS people"
+            f" FROM ({per_table}) AS counted"
+            " LEFT JOIN (SELECT guild_id, count(DISTINCT user_id) AS people FROM stats_user_days GROUP BY guild_id)"
+            " AS people USING (guild_id)"
+            " GROUP BY counted.guild_id, people.people ORDER BY rows DESC, counted.guild_id LIMIT $1",
+            limit,
+        )
+        servers = await self.pool.fetchval("SELECT count(DISTINCT guild_id) FROM stats_guild_days")
+        people = await self.pool.fetchval("SELECT count(DISTINCT user_id) FROM stats_user_days")
+        oldest = await self.pool.fetchval("SELECT min(day) FROM stats_guild_days")
+        return Footprint(
+            guilds=tuple(GuildFootprint(row["guild_id"], row["rows"], row["people"]) for row in rows),
+            servers=int(servers),
+            people=int(people),
+            oldest_day=oldest,
+        )
 
     # server queries
 
