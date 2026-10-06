@@ -12,4 +12,4 @@ repos:
         language: system
         entry: bash -c 'grep -nE "[{]{2}(CONFIRM|SAMPLE)" "$@" && exit 1 || exit 0' --
         types: [text]
-        exclude: '^(CLAUDE|AUDIT|CONVENTIONS|HUMAN-TODO|README)\.md$'
+        exclude: '^README\.md$'
