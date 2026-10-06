@@ -46,8 +46,11 @@ export default async function PrivacyPage() {
         <p>
           Every server the bot is in gets activity counts: how many messages, joins, leaves, and commands happened per day, by
           channel, by hour, and by member. These are numbers only. The message event is counted; the text is never read or stored,
-          and nothing is backfilled from history. Daily counts are kept for 90 days. <code>stats off</code> (Manage Server) stops
-          counting and deletes the server&rsquo;s counts at once; <code>stats on</code> starts again from zero.
+          and nothing is backfilled from history. Counts are kept for as long as the server keeps them on.{" "}
+          <code>stats off</code> (Manage Server) stops counting and deletes the server&rsquo;s counts at once;{" "}
+          <code>stats on</code> starts again from zero. <code>whois</code> shows a member&rsquo;s lifetime message count and a
+          rank for it: one baseline from Discord&rsquo;s own message search, kept up to date from those counts and deleted with
+          them.
         </p>
 
         <h2>What the dashboard collects</h2>
@@ -106,9 +109,9 @@ export default async function PrivacyPage() {
           <li>Recaps and transcripts: the server&rsquo;s retention window, or <code>recap delete</code> for one session.</li>
           <li>Anti-brainrot numbers: pruned automatically once they have decayed; the activity log keeps 30 days.</li>
           <li>
-            Activity counts: 90 days, or at once with <code>stats off</code> (Manage Server). After the bot is removed from a server
-            its counts go seven days later, in case the removal was a mistake. <code>report</code> asks for your own counts to be
-            deleted.
+            Activity counts: kept while the server keeps them on, deleted at once with <code>stats off</code> (Manage Server).
+            After the bot is removed from a server its counts go seven days later, in case the removal was a mistake.{" "}
+            <code>report</code> asks for your own counts to be deleted.
           </li>
           <li>Everything else for a server: deleted when the bot is removed from that server.</li>
           <li>Your dashboard session: sign out, or wait for it to expire.</li>
