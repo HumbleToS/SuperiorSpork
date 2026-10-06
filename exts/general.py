@@ -5,18 +5,23 @@ import logging
 import os
 import re
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import discord
 import psutil
-from discord import app_commands
+from discord import app_commands, ui
 from discord.ext import commands
 
+import config
 from config import PREFIX
 
-from .utils.embeds import SporkEmbed
+from .utils.cache import TTLCache
+from .utils.checks import is_guild_owner
+from .utils.embeds import SporkEmbed, pastel_color
 from .utils.emojis import Status
 from .utils.guilds import GuildGraphics
+from .utils.layouts import SporkLayout, graphics_gallery
+from .utils.stats import rank_for
 from .utils.time import how_old, ts
 from .utils.wording import plural
 
@@ -25,27 +30,80 @@ if TYPE_CHECKING:
 
     from bot import Spork
 
+    from .stats import Stats
     from .utils.context import GuildContext
 
 _logger = logging.getLogger(__name__)
 
+# profile badges by public flag, in the order the Discord profile shows them;
+# internal flags (spammer, team_user) stay out
+BADGES: dict[str, str] = {
+    "staff": "Discord Staff",
+    "partner": "Partnered Server Owner",
+    "hypesquad": "HypeSquad Events",
+    "bug_hunter": "Discord Bug Hunter",
+    "bug_hunter_level_2": "Discord Bug Hunter Gold",
+    "hypesquad_bravery": "HypeSquad Bravery",
+    "hypesquad_brilliance": "HypeSquad Brilliance",
+    "hypesquad_balance": "HypeSquad Balance",
+    "early_supporter": "Early Supporter",
+    "early_verified_bot_developer": "Early Verified Bot Developer",
+    "discord_certified_moderator": "Moderator Programs Alumni",
+    "active_developer": "Active Developer",
+    "verified_bot": "Verified Bot",
+    "bot_http_interactions": "Supports Commands",
+    "system": "System",
+}
 
-class General(commands.Cog):
+
+def badges(flags: discord.PublicUserFlags) -> list[str]:
+    """The badge names a user's public flags earn, in profile order."""
+    return [name for flag, name in BADGES.items() if getattr(flags, flag)]
+
+
+class General(commands.Cog, description="Server, user, and bot info"):
     def __init__(self, bot: Spork) -> None:
         self.bot = bot
         self._current_process = psutil.Process(os.getpid())
+        self._current_process.cpu_percent()  # the first reading is always 0.0, prime it
+        self._profile_cache = TTLCache(ttl=900)  # banners/accents barely change; 15 minutes spares the API
 
     @commands.Cog.listener(name="on_message")
-    async def mention_responder(self, message: discord.Message) -> None | discord.Message:
+    async def mention_responder(self, message: discord.Message) -> discord.Message | None:
         guild = message.guild
         if not guild:
             return
         if re.fullmatch(rf"<@!?{guild.me.id}>", message.content):
+            prefix = await self.bot.settings.get_prefix(guild.id) or PREFIX
             embed = SporkEmbed(
-                description=f"Hello! My prefix is `{PREFIX}`",
+                description=f"Hello! My prefix is `{prefix}`",
             )
             return await message.reply(embed=embed)
         return
+
+    @commands.hybrid_command()
+    @commands.guild_only()
+    @is_guild_owner()
+    @app_commands.describe(new_prefix="The new prefix, leave empty to see the current one")
+    async def prefix(self, ctx: GuildContext, new_prefix: str | None = None) -> None:
+        """Shows or changes my prefix for this server
+
+        Parameters
+        ----------
+        new_prefix : str | None, optional
+            The new prefix, leave empty to see the current one
+        """
+        if new_prefix is None:
+            current = await self.bot.settings.get_prefix(ctx.guild.id) or PREFIX
+            await ctx.send(f"My prefix here is `{current}`")
+            return
+
+        if len(new_prefix) > 10:
+            await ctx.send("That prefix is too long! Keep it to 10 characters or less.")
+            return
+
+        await self.bot.settings.set_prefix(ctx.guild.id, new_prefix)
+        await ctx.send(f"My prefix here is now `{new_prefix}`")
 
     @commands.command(aliases=("cu", "pb"))
     @commands.guild_only()
@@ -81,6 +139,8 @@ class General(commands.Cog):
 
     @commands.hybrid_command()
     @commands.guild_only()
+    @commands.cooldown(1, 5.0, commands.BucketType.user)
+    @app_commands.describe(user="A user or guild member, defaults to you")
     async def whois(self, ctx: GuildContext, *, user: discord.Member | discord.User | None = None) -> None:
         """Shows info about a user
 
@@ -90,103 +150,157 @@ class General(commands.Cog):
             A user or guild member, by default None
         """
         user = user or ctx.author
-        embed = SporkEmbed()
+        await ctx.defer()
+        # banner and accent colour only come on a fetch
+        fetched = self._profile_cache.get(user.id)
+        if fetched is None:
+            fetched = await self.bot.fetch_user(user.id)
+            self._profile_cache.set(user.id, fetched)
         # Roles and format_date credit: https://github.com/Rapptz/RoboDanny
-        roles = [role.name.replace("@", "@\u200b") for role in getattr(user, "roles", [])]
+        roles = [role.name.replace("@", "@\u200b") for role in getattr(user, "roles", [])[:0:-1]]  # top first, no @everyone
 
         def format_date(datetime: datetime.datetime | None) -> str:
             if datetime is None:
                 return "N/A"
-            return f"{ts(datetime):F} ({ts(datetime):R})"
+            return f"{ts(datetime):F}\n╰ {ts(datetime):R}"
+
+        # names render markdown inside a TextDisplay, so escape them
+        display_name = discord.utils.escape_markdown(user.display_name)
+        username = discord.utils.escape_markdown(str(user))
+        if isinstance(user, discord.Member):
+            try:
+                status = Status[str(user.status)].value
+            except KeyError:
+                status = Status.offline.value
+            title = f"# {display_name}\n{status} {username}"
+        else:
+            title = f"# {display_name}" if display_name == username else f"# {display_name}\n{username}"
+
+        items: list[ui.Item] = [
+            ui.Section(title, accessory=ui.Thumbnail(user.display_avatar.url)),
+            ui.Separator(spacing=discord.SeparatorSpacing.large),
+        ]
 
         if isinstance(user, discord.Member):
             spotify = discord.utils.find(lambda activities: isinstance(activities, discord.Spotify), user.activities)
             if isinstance(spotify, discord.Spotify):
                 artists = ", ".join(spotify.artists)
-                embed.add_field(
-                    name="Spotify",
-                    value=f"Listening to [**{spotify.title}** by **{artists}**]({spotify.track_url}) on **{spotify.album}**",
-                    inline=False,
+                items.append(
+                    ui.TextDisplay(
+                        f"### Spotify"
+                        f"\nListening to [**{spotify.title}** by **{artists}**]({spotify.track_url}) on **{spotify.album}**"
+                    )
                 )
 
-        embed.set_thumbnail(url=user.display_avatar.url)
-        embed.set_author(name=user, icon_url=user.display_avatar.url)
-        embed.add_field(name="Joined", value=format_date(getattr(user, "joined_at", None)), inline=False)
-        embed.add_field(name="Registered", value=format_date(user.created_at), inline=False)
+        items.append(ui.TextDisplay(f"### Joined\n{format_date(getattr(user, 'joined_at', None))}"))
+        items.append(ui.TextDisplay(f"### Registered\n{format_date(user.created_at)}"))
+        if isinstance(user, discord.Member) and user.premium_since is not None:
+            items.append(ui.TextDisplay(f"### Boosting Since\n{format_date(user.premium_since)}"))
+
+        earned = badges(user.public_flags)
+        if earned:
+            items.append(ui.TextDisplay(f"### Badges\n{', '.join(earned)}"))
+
+        stats = self.bot.get_cog("Stats")
+        if isinstance(user, discord.Member) and not user.bot and stats is not None:
+            total = await cast("Stats", stats).lifetime_messages(ctx.guild, user.id)
+            if total is not None:
+                rank = rank_for(total)
+                if rank.next_name is not None and rank.next_floor is not None:
+                    climb = f"╰ `{rank.next_floor - total:,}` more to {rank.next_name}"
+                else:
+                    climb = "╰ top of the ladder"
+                items.append(ui.TextDisplay(f"### Rank\n**{rank.name}** · `{total:,}` messages here\n{climb}"))
 
         if roles:
-            embed.add_field(name="Roles", value=", ".join(roles) if len(roles) < 15 else f"{len(roles)} roles", inline=False)
+            items.append(ui.TextDisplay(f"### Roles\n{', '.join(roles) if len(roles) < 15 else f'{len(roles)} roles'}"))
 
-        embed.add_field(
-            name="Mutual Servers",
-            value=f"You are in `{len(user.mutual_guilds):,}` servers with the bot!",
-        )
-        embed.set_footer(text=f"User ID: {user.id} | Date: {ctx.message.created_at.strftime('%m/%d/%Y')}")
-        await ctx.send(embed=embed)
+        items.append(ui.TextDisplay(f"### Mutual Servers\nYou are in `{len(user.mutual_guilds):,}` servers with the bot!"))
+
+        gallery = graphics_gallery(fetched.banner)
+        if gallery:
+            items.append(gallery)
+
+        items.append(ui.Separator())
+        items.append(ui.TextDisplay(f"-# User ID: {user.id}"))
+        await ctx.send(view=SporkLayout(*items, accent_colour=fetched.accent_colour or pastel_color(user.id)))
 
     @commands.hybrid_command()
     @commands.guild_only()
+    @commands.cooldown(1, 5.0, commands.BucketType.user)
     async def serverinfo(self, ctx: GuildContext) -> None:
         """Show general info about the server"""
         guild = ctx.guild
         guild_age = how_old(discord.utils.utcnow() - guild.created_at)
-        bots = sum(member.bot for member in guild.members)
+        member_count = guild.member_count or len(guild.members)
 
         # Last boost, status info, role count inspired by:
         # https://github.com/DuckBot-Discord/DuckBot
         last_boost = max(guild.members, key=lambda m: m.premium_since or guild.created_at)
         if last_boost.premium_since is not None:
-            boost = f"\n{last_boost}" f"\n╰ {ts(last_boost.premium_since):R}"
+            boost = f"\n{last_boost}\n╰ {ts(last_boost.premium_since):R}"
         else:
             boost = "No active boosters"
 
-        embed = SporkEmbed(
-            title=guild.name,
-            description=f"{plural(len(guild.members)):member} are in this server!",
-        )
-        embed.add_field(
-            name="Info",
-            value=f"**Owner:** {guild.owner}"
-            f"\n**Role Count:** {len(guild.roles):,}"
-            f"\n**File Size limit:** {guild.filesize_limit // 1048576:,}",
-            inline=True,
-        )
-        embed.add_field(
-            name="Boosts",
-            value=f"**Level:** {guild.premium_tier} | {plural(guild.premium_subscription_count):Boost}"
-            f"\n**Booster Count:** {len(guild.premium_subscribers):,}"
-            f"\n**Last Booster:** {boost}",
-            inline=True,
-        )
+        # one pass over the member list instead of five; big guilds notice
+        bots = online_count = idle_count = dnd_count = offline_count = 0
+        for member in guild.members:
+            bots += member.bot
+            if member.status is discord.Status.online:
+                online_count += 1
+            elif member.status is discord.Status.idle:
+                idle_count += 1
+            elif member.status is discord.Status.dnd:
+                dnd_count += 1
+            elif member.status is discord.Status.offline:
+                offline_count += 1
 
-        embed.add_field(name="Graphics", value=GuildGraphics.from_guild(guild), inline=True)
-        embed.add_field(
-            name="Members",
-            value=f"**Total:** {plural(len(guild.members)):member} ({plural(bots):bot})"
-            f"\n**Member Limit:** {guild.max_members:,}",
-            inline=True,
-        )
+        title = f"# {discord.utils.escape_markdown(guild.name)}\n{plural(member_count):member} are in this server!"
+        header = ui.Section(title, accessory=ui.Thumbnail(guild.icon.url)) if guild.icon else ui.TextDisplay(title)
 
-        online_count = sum(m.status is discord.Status.online for m in guild.members)
-        idle_count = sum(m.status is discord.Status.idle for m in guild.members)
-        dnd_count = sum(m.status is discord.Status.dnd for m in guild.members)
-        offline_count = sum(m.status is discord.Status.offline for m in guild.members)
+        items: list[ui.Item] = [
+            header,
+            ui.Separator(spacing=discord.SeparatorSpacing.large),
+            ui.TextDisplay(
+                f"### Info"
+                f"\n**Owner:** {guild.owner}"
+                f"\n**Role Count:** {len(guild.roles):,}"
+                f"\n**File Size Limit:** {guild.filesize_limit // 1048576:,} MB"
+            ),
+            ui.TextDisplay(
+                f"### Boosts"
+                f"\n**Level:** {guild.premium_tier} | {plural(guild.premium_subscription_count):Boost}"
+                f"\n**Booster Count:** {len(guild.premium_subscribers):,}"
+                f"\n**Last Booster:** {boost}"
+            ),
+            ui.TextDisplay(
+                f"### Members"
+                f"\n**Total:** {plural(member_count):member} ({plural(bots):bot})"
+                f"\n**Member Limit:** {f'{guild.max_members:,}' if guild.max_members else 'N/A'}"
+            ),
+            ui.TextDisplay(
+                f"### Status Counts"
+                f"\n{Status.online.value} Online: {online_count:,}"
+                f"\n{Status.idle.value} Idle: {idle_count:,}"
+                f"\n{Status.dnd.value} DND: {dnd_count:,}"
+                f"\n{Status.offline.value} Offline: {offline_count:,}"
+            ),
+        ]
 
-        embed.add_field(
-            name="Status Counts",
-            value=f"{Status.online.value} Online: {online_count:,}"
-            f"\n{Status.idle.value} Idle: {idle_count:,}"
-            f"\n{Status.dnd.value} DND: {dnd_count:,}"
-            f"\n{Status.offline.value} Offline: {offline_count:,}",
-            inline=True,
-        )
-        embed.set_thumbnail(url=guild.icon)
-        embed.set_footer(text=f"The server is {guild_age} • Guild ID: {guild.id}")
-        await ctx.send(embed=embed)
+        graphics = GuildGraphics.from_guild(guild)
+        gallery = graphics_gallery(graphics.banner, graphics.splash)
+        if gallery:
+            items.append(gallery)
+
+        items.append(ui.Separator())
+        items.append(ui.TextDisplay(f"-# The server is {guild_age} • Guild ID: {guild.id}"))
+        await ctx.send(view=SporkLayout(*items, accent_colour=pastel_color(guild.id)))
 
     @commands.hybrid_command()
+    @commands.cooldown(1, 5.0, commands.BucketType.user)
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    @app_commands.describe(invite_code="A guilds invite or vanity")
     async def inviteinfo(self, ctx: Context, invite_code: str) -> discord.Message | None:
         """Get information about a guilds invite
 
@@ -195,64 +309,146 @@ class General(commands.Cog):
         invite_code : str
             A guilds invite or vanity
         """
-        invite = await self.bot.fetch_invite(invite_code, with_counts=True, with_expiration=True)
-
-        if invite is None:
+        await ctx.defer()
+        try:
+            invite = await self.bot.fetch_invite(invite_code, with_counts=True)
+        except discord.NotFound:
             return await ctx.send("Could not get information about that invite.")
 
-        embed = SporkEmbed(title="Invite Information")
         if invite.inviter:
-            user_info = f"Name and ID: {invite.inviter} `({invite.inviter.id})`"
-            f"\nRegistered on {ts(invite.inviter.created_at):F}"
+            user_info = (
+                f"Name and ID: {invite.inviter} `({invite.inviter.id})`\n╰ Registered on {ts(invite.inviter.created_at):F}"
+            )
         else:
             user_info = "I could not fetch any user information, this could be due to a vanity invite."
 
-        embed.add_field(name="User Information", value=user_info, inline=True)
+        items: list[ui.Item] = []
+        accent = None
 
         if isinstance(invite.guild, (discord.PartialInviteGuild, discord.Guild)):
             guild_age = how_old(discord.utils.utcnow() - invite.guild.created_at)
 
-            embed.description = f"Invite information about [{invite.code}]({invite.url})"
-            f"{f'(the vanity is {invite.guild.vanity_url_code})' if invite.guild.vanity_url_code else ''} and has been used `{f'{invite.uses:,}' if invite.uses is not None else '0'}` times."
+            title = (
+                f"# Invite Information"
+                f"\nInvite information about [{invite.code}]({invite.url})"
+                f"{f' (the vanity is {invite.guild.vanity_url_code})' if invite.guild.vanity_url_code else ''}"
+                f" and has been used `{f'{invite.uses:,}' if invite.uses is not None else '0'}` times."
+            )
+            header = (
+                ui.Section(title, accessory=ui.Thumbnail(invite.guild.icon.url))
+                if invite.guild.icon
+                else ui.TextDisplay(title)
+            )
+            items.extend((header, ui.Separator(spacing=discord.SeparatorSpacing.large)))
+
+            guild_name = discord.utils.escape_markdown(invite.guild.name)
+            accent = pastel_color(invite.guild.id)
+            items.append(ui.TextDisplay(f"### User Information\n{user_info}"))
 
             if isinstance(invite.expires_at, datetime.datetime):
-                embed.add_field(
-                    name="The Invites Demise",
-                    value=f"{ts(invite.expires_at):F} ({ts(invite.expires_at):R})",
-                    inline=False,
+                items.append(
+                    ui.TextDisplay(f"### The Invites Demise\n{ts(invite.expires_at):F}\n╰ {ts(invite.expires_at):R}")
                 )
 
-            embed.add_field(
-                name=f"{invite.guild.name} Description",
-                value=f"{invite.guild.description if invite.guild.description else 'No guild description found.'}",
-                inline=False,
+            items.append(
+                ui.TextDisplay(
+                    f"### {guild_name} Description"
+                    f"\n{invite.guild.description if invite.guild.description else 'No guild description found.'}"
+                )
             )
 
-            embed.add_field(
-                name="Guild Created On",
-                value=f"{ts(invite.guild.created_at):F}\n(That's {guild_age}!)",
-                inline=True,
-            )
-
-            embed.add_field(name="Verification Level", value=f"{invite.guild.verification_level!s}".capitalize())
-            embed.add_field(name="Graphics", value=GuildGraphics.from_guild(invite.guild).to_text().replace("**", ""))
+            items.append(ui.TextDisplay(f"### Guild Created On\n{ts(invite.guild.created_at):F}\n╰ That's {guild_age}!"))
+            items.append(ui.TextDisplay(f"### Verification Level\n{f'{invite.guild.verification_level!s}'.capitalize()}"))
 
             if isinstance(invite.channel, (discord.PartialInviteChannel, discord.abc.GuildChannel)):
-                embed.add_field(
-                    name="Invite Channel",
-                    value=f"[#{invite.channel}](https://discord.com/channels/{invite.guild.id}/{invite.channel.id}) `({invite.channel.id})`\nCreated on {ts(invite.channel.created_at):F}",
+                items.append(
+                    ui.TextDisplay(
+                        f"### Invite Channel"
+                        f"\n[#{invite.channel}](https://discord.com/channels/{invite.guild.id}/{invite.channel.id}) `({invite.channel.id})`"
+                        f"\n╰ Created on {ts(invite.channel.created_at):F}"
+                    )
                 )
 
-            embed.set_footer(text=f"{invite.guild.name} | {invite.guild.id}")
-
-            embed.add_field(
-                name="Member Counts",
-                value=f"Users Online: `{invite.approximate_presence_count:,}`\nMember Count: `{invite.approximate_member_count:,}`\nBooster Count: `{f'{invite.guild.premium_subscription_count:,}' if invite.guild.premium_subscription_count != 0 else ':('}`",
+            items.append(
+                ui.TextDisplay(
+                    f"### Member Counts"
+                    f"\nUsers Online: `{invite.approximate_presence_count:,}`"
+                    f"\nMember Count: `{invite.approximate_member_count:,}`"
+                    f"\nBooster Count: `{f'{invite.guild.premium_subscription_count:,}' if invite.guild.premium_subscription_count != 0 else ':('}`"
+                )
             )
 
-        await ctx.send(embed=embed)
+            graphics = GuildGraphics.from_guild(invite.guild)
+            gallery = graphics_gallery(graphics.banner, graphics.splash)
+            if gallery:
+                items.append(gallery)
+
+            items.extend((ui.Separator(), ui.TextDisplay(f"-# {guild_name} | {invite.guild.id}")))
+        else:
+            items.append(ui.TextDisplay(f"# Invite Information\n### User Information\n{user_info}"))
+
+        await ctx.send(view=SporkLayout(*items, accent_colour=accent))
 
     @commands.hybrid_command()
+    async def privacy(self, ctx: Context) -> None:
+        """What data I collect, how long it's kept, and how to delete your data"""
+        privacy_url = getattr(config, "PRIVACY_URL", "")
+        terms_url = getattr(config, "TERMS_URL", "")
+        items: list[ui.Item] = [
+            ui.TextDisplay("# Privacy"),
+            ui.Separator(spacing=discord.SeparatorSpacing.large),
+            ui.TextDisplay(
+                "### What gets collected"
+                "\nVoice audio is captured only during sessions someone explicitly starts with `record start`,"
+                " announced in chat, and only from users who acknowledged inclusion. Raw audio is deleted the"
+                " moment transcription finishes; the transcript and an AI recap are kept for the server's"
+                " retention window (90 days unless changed). In servers that turn on anti-brainrot, messages in"
+                " the opted-in channels are checked against a wordlist; only heat numbers and counters are stored,"
+                " never the text. Every server also gets activity counts — messages, joins, leaves, and commands per"
+                " day, by channel and by member — as numbers only, never text, kept until the server turns them off"
+                " with `stats off`. `whois` shows a member's lifetime message count and rank: one baseline from"
+                " Discord's own search index, kept up to date from those counts. The developer can see the counts,"
+                " along with server and member metadata, for support and debugging, and every such look is logged."
+                " Beyond that: per-server settings and prefixes."
+            ),
+            ui.TextDisplay(
+                "### How to delete"
+                "\n`optout` permanently excludes your audio in a server, `recap delete` removes a whole session,"
+                " `stats off` (Manage Server) stops activity counts and deletes them, `report` asks for your own"
+                " counts to be deleted, and removing me from a server purges everything I stored for it."
+            ),
+            ui.TextDisplay(f"[Privacy Policy]({privacy_url}) • [Terms of Service]({terms_url})"),
+            ui.Separator(),
+            ui.TextDisplay("-# Something wrong? `report` reaches the owner."),
+        ]
+        await ctx.send(view=SporkLayout(*items))
+
+    @commands.hybrid_command()
+    @commands.cooldown(1, 60.0, commands.BucketType.user)
+    @app_commands.describe(message="What went wrong, or what the owner should know")
+    async def report(self, ctx: Context, *, message: str) -> None:
+        """Files a report to the bot owner
+
+        Parameters
+        ----------
+        message : str
+            What went wrong, or what the owner should know
+        """
+        destination = self.bot.get_channel(getattr(config, "REPORT_CHANNEL_ID", 0))
+        if destination is None:
+            destination = (await self.bot.application_info()).owner
+        embed = SporkEmbed(title="Report", description=message[:2000])
+        embed.set_footer(text=f"From {ctx.author} ({ctx.author.id}) in {ctx.guild or 'DMs'}")
+        try:
+            await destination.send(embed=embed)
+        except discord.HTTPException:
+            await ctx.send("I couldn't deliver that report — please try again later.")
+            return
+        _logger.info(f"Report filed by {ctx.author.id}")
+        await ctx.send("Thanks — your report is with the owner.", ephemeral=True)
+
+    @commands.hybrid_command()
+    @commands.cooldown(1, 5.0, commands.BucketType.user)
     async def about(self, ctx: Context) -> None:
         """Shows info about the bot"""
         before_check = time.perf_counter()
@@ -260,31 +456,31 @@ class General(commands.Cog):
         after_check = time.perf_counter()
         api_latency = (after_check - before_check) * 1000
         seconds_running = (discord.utils.utcnow() - self.bot.start_time).total_seconds()
-        embed = SporkEmbed(
-            title="Statistics",
-            description=f"Running since {ts(self.bot.start_time):F}",
-        )
-        embed.add_field(
-            name="Bot Information",
-            value=f"Total Guilds: `{len(self.bot.guilds):,}`\n"
-            f"Total Users: `{len(self.bot.users):,}`\n"
-            f"Total Seconds Running: `{int(seconds_running):,}s`",
-            inline=True,
-        )
-        embed.add_field(
-            name="Host Information",
-            value=f"CPU Usage: `{self._current_process.cpu_percent()}%`\n"
-            f"RAM Usage: `{self._current_process.memory_percent():.2}%`\n"
-            f"Running on `{self._current_process.num_threads()}` threads",
-            inline=False,
-        )
-        embed.add_field(
-            name="Latencies",
-            value=f"Latency: `{round(self.bot.latency * 1000):,}ms`\nAPI Latency: `{int(api_latency):,}ms`",
-            inline=False,
-        )
-        embed.set_footer(text=f"Made in discord.py {discord.__version__}")
-        await ctx.send(embed=embed)
+        items: list[ui.Item] = [
+            ui.Section(
+                f"# Statistics\nRunning since {ts(self.bot.start_time):F}",
+                accessory=ui.Thumbnail(self.bot.user.display_avatar.url),
+            ),
+            ui.Separator(spacing=discord.SeparatorSpacing.large),
+            ui.TextDisplay(
+                f"### Bot Information"
+                f"\nTotal Guilds: `{len(self.bot.guilds):,}`"
+                f"\nTotal Users: `{len(self.bot.users):,}`"
+                f"\nTotal Seconds Running: `{int(seconds_running):,}s`"
+            ),
+            ui.TextDisplay(
+                f"### Host Information"
+                f"\nCPU Usage: `{self._current_process.cpu_percent()}%`"
+                f"\nRAM Usage: `{self._current_process.memory_percent():.2f}%`"
+                f"\nRunning on `{self._current_process.num_threads()}` threads"
+            ),
+            ui.TextDisplay(
+                f"### Latencies\nLatency: `{round(self.bot.latency * 1000):,}ms`\nAPI Latency: `{int(api_latency):,}ms`"
+            ),
+            ui.Separator(),
+            ui.TextDisplay(f"-# Made in discord.py {discord.__version__}"),
+        ]
+        await ctx.send(view=SporkLayout(*items, accent_colour=pastel_color(self.bot.user.id)))
 
 
 async def setup(bot: Spork) -> None:

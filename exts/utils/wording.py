@@ -10,5 +10,5 @@ class plural:
         singular, _, plural = format_spec.partition("|")
         plural = plural or f"{singular}s"
         if abs(v) != 1:
-            return f"{v} {plural}"
-        return f"{v} {singular}"
+            return f"{v:,} {plural}"
+        return f"{v:,} {singular}"

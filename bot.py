@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import logging.handlers
+import signal
 import sys
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from discord.ext import commands
 
 import config
 from exts import EXTENSIONS
+from exts.utils.sessions import SessionStore
+from exts.utils.settings import GuildSettings
 
 
 def setup_logging() -> None:
@@ -26,16 +29,17 @@ def setup_logging() -> None:
     sh.setLevel(logging.DEBUG)
     sh.setFormatter(log_fmt)
 
-    max_bytes = 4 * 1024 * 1024  # 4 MB
-    rfh = logging.handlers.RotatingFileHandler("logs/superior-spork.log", maxBytes=max_bytes, backupCount=10)
-    rfh.setLevel(logging.DEBUG)
-    rfh.setFormatter(log_fmt)
-
-    HANDLER = sh if config.TESTING else rfh
-
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
-    root_logger.addHandler(HANDLER)
+    root_logger.addHandler(sh)
+
+    if not config.TESTING:
+        Path("logs").mkdir(exist_ok=True)
+        max_bytes = 4 * 1024 * 1024  # 4 MB
+        rfh = logging.handlers.RotatingFileHandler("logs/superior-spork.log", maxBytes=max_bytes, backupCount=10)
+        rfh.setLevel(logging.DEBUG)
+        rfh.setFormatter(log_fmt)
+        root_logger.addHandler(rfh)
 
 
 _logger = logging.getLogger(__name__)
@@ -44,17 +48,14 @@ _logger = logging.getLogger(__name__)
 class Spork(commands.Bot):
     def __init__(self, pool: asyncpg.Pool, session: ClientSession) -> None:
         super().__init__(
-            command_prefix=commands.when_mentioned_or(config.PREFIX),
+            command_prefix=get_prefix,
             intents=discord.Intents(
-                emojis=True,
                 guilds=True,
-                invites=True,
-                members=True,
-                message_content=True,
+                members=True,  # privileged: member lists, joined_at and mutual guilds in whois/serverinfo
+                message_content=True,  # privileged: prefix commands and the cleanup prefix check
                 messages=True,
-                presences=True,
-                reactions=True,
-                voice_states=True,
+                presences=True,  # privileged: spotify and status counts in whois/serverinfo
+                voice_states=True,  # voice recap recording sessions
             ),
             status=Status.dnd,
             activity=Activity(type=ActivityType.watching, name=f"my bad code | {config.PREFIX}help"),
@@ -63,27 +64,44 @@ class Spork(commands.Bot):
         self.start_time = discord.utils.utcnow()
         self.pool = pool
         self.session = session
+        self.settings = GuildSettings(pool)
+        self.sessions = SessionStore(pool)
 
     async def setup_hook(self) -> None:
         for ext in EXTENSIONS:
             await self.load_extension(ext.name)
             _logger.info("Loaded %sextension: %s", "module " if ext.ispkg else "", ext.name)
 
-        with Path("./database/schema.sql").open() as file:
-            sql = file.read()
-            await self.pool.execute(sql)
+        sql = await asyncio.to_thread(Path("./database/schema.sql").read_text)
+        await self.pool.execute(sql)
 
         await self.load_extension("jishaku")
         _logger.info("Extension: jishaku loaded successfully")
 
     async def on_message_edit(self, before: discord.Message, after: discord.Message) -> None:
-        await self.process_commands(after)
+        # edits also fire when discord unfurls an embed; only re-run on real content changes
+        if before.content != after.content:
+            await self.process_commands(after)
+
+
+async def get_prefix(bot: Spork, message: discord.Message) -> list[str]:
+    prefix = config.PREFIX
+    if message.guild:
+        prefix = await bot.settings.get_prefix(message.guild.id) or config.PREFIX
+    # the prefix is case-insensitive: hand back the casing the message actually used so it matches
+    if message.content[: len(prefix)].casefold() == prefix.casefold():
+        prefix = message.content[: len(prefix)]
+    return commands.when_mentioned_or(prefix)(bot, message)
 
 
 async def main() -> None:
     setup_logging()
     async with ClientSession() as session, asyncpg.create_pool(config.DB_URL, command_timeout=30) as pool:
         async with Spork(pool=pool, session=session) as bot:
+            # docker stop sends SIGTERM, which Client.run/start does not handle
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(sig, lambda: asyncio.create_task(bot.close()))
             await bot.start(config.TOKEN, reconnect=True)
 
 

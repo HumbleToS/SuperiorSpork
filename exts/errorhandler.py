@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import logging
 import math
-import traceback
 from typing import TYPE_CHECKING
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-from .utils.checks import NotGuildOwner
+from .utils.checks import NotGuildOwner, NotRecorder
 from .utils.wording import plural
 
 if TYPE_CHECKING:
@@ -18,7 +17,7 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 
-class ErorrHandler(commands.Cog):
+class ErrorHandler(commands.Cog):
     def __init__(self, bot: Spork) -> None:
         self.bot = bot
 
@@ -34,15 +33,18 @@ class ErorrHandler(commands.Cog):
     async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
         if isinstance(error, app_commands.CommandOnCooldown):
             current_cooldown = math.floor(error.retry_after * 100) / 100
-            return await interaction.response.send_message(
-                f"This command is on cooldown for another {plural(int(current_cooldown)):second}!"
-            )
+            message = f"This command is on cooldown for another {plural(int(current_cooldown)):second}!"
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
+        elif isinstance(error, app_commands.CheckFailure):
+            _logger.info(error)  # the cog that owns the command has already answered, like the prefix path below
         else:
-            trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))
-            _logger.exception(f"Ignoring exception in command {interaction.command}:\n {trace}")
+            _logger.error(f"Ignoring exception in command {interaction.command}", exc_info=error)
 
     @commands.Cog.listener()
-    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> None | discord.Message:
+    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> discord.Message | None:
         if hasattr(ctx.command, "on_error"):
             return
 
@@ -58,18 +60,24 @@ class ErorrHandler(commands.Cog):
             return await ctx.send(f"You can do `{command_used}` again in {plural(int(current_cooldown)):second}")
         elif isinstance(error, commands.TooManyArguments):
             return await ctx.send(f"The command `{command_used}` was used with too many arguments")
-        elif isinstance(error, commands.UserInputError):
-            return await ctx.send(f"The command `{command_used}` was used incorrectly")
         elif isinstance(error, commands.MissingRequiredArgument):
             return await ctx.send(f"You're missing the required argument `{error.param.name}`")
-        elif isinstance(error, commands.CheckFailure):
-            return _logger.info(error)
+        elif isinstance(error, commands.UserInputError):
+            return await ctx.send(f"The command `{command_used}` was used incorrectly")
         elif isinstance(error, NotGuildOwner):
             return await ctx.send(f"The command `{command_used}` can only be used by the server owner.")
+        elif isinstance(error, commands.NoPrivateMessage):
+            return await ctx.send(f"The command `{command_used}` can only be used in a server.")
+        elif isinstance(error, NotRecorder):
+            return await ctx.send(f"The command `{command_used}` needs the recorder role, or Manage Server.")
+        elif isinstance(error, commands.MissingPermissions):
+            missing = ", ".join(error.missing_permissions)
+            return await ctx.send(f"The command `{command_used}` needs the `{missing}` permission.")
+        elif isinstance(error, commands.CheckFailure):
+            return _logger.info(error)
         else:
-            trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))
-            _logger.exception(f"Ignoring exception in command {ctx.command}:\n {trace}")
+            _logger.error(f"Ignoring exception in command {ctx.command}", exc_info=error)
 
 
 async def setup(bot: Spork) -> None:
-    await bot.add_cog(ErorrHandler(bot))
+    await bot.add_cog(ErrorHandler(bot))

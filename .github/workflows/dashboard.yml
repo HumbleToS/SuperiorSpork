@@ -1,0 +1,40 @@
+name: Dashboard
+
+on:
+  push:
+    branches: [master]
+    paths: ["dashboard/**", ".github/workflows/dashboard.yml"]
+  pull_request:
+    paths: ["dashboard/**", ".github/workflows/dashboard.yml"]
+
+defaults:
+  run:
+    working-directory: dashboard
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: dashboard/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: dashboard/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check:tokens
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t sprok-dashboard:ci .

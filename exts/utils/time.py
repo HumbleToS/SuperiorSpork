@@ -12,9 +12,11 @@ class ts:
 
     def __format__(self, __format_spec: str) -> str:
         spec, _, _ = __format_spec.partition("|")
+        if not spec:
+            return discord.utils.format_dt(self.value)
         return discord.utils.format_dt(self.value, style=spec)  # type: ignore
 
 
 def how_old(time: timedelta) -> str:
-    days, hours = time.days, time.seconds // 36001
+    days, hours = time.days, time.seconds // 3600
     return f"{days:,} days and {plural(hours):hour} old"

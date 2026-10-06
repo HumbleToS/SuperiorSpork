@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install ruff==0.16.0
+      - run: ruff check .
+      - run: ruff format --check .
+
+  import-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements.txt
+      - run: cp config.example.py config.py
+      - run: python -c "import bot, exts"
+
+  tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      SPORK_TEST_DSN: postgresql://postgres:test@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: cp config.example.py config.py
+      - run: python -m pytest tests/ -q
+
+  confirm-token-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: scan code and config for unresolved tokens
+        run: |
+          if grep -rnE --exclude-dir=.git --include='*.py' --include='*.toml' --include='*.cfg' --include='*.yml' --include='*.yaml' --include='*.sql' --include='Dockerfile*' '[{]{2}(CONFIRM|SAMPLE)' .; then
+            echo 'Unresolved tokens found in code or config. Fill in the real value first.'
+            exit 1
+          fi

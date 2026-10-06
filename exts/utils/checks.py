@@ -14,6 +14,12 @@ class NotGuildOwner(commands.CheckFailure):
     pass
 
 
+class NotRecorder(commands.CheckFailure):
+    """Raised if someone without the recorder role tries to manage recordings"""
+
+    pass
+
+
 def is_guild_owner() -> Check[commands.Context[Any]]:
     """Checks if the guild owner ran the command."""
 
@@ -24,3 +30,20 @@ def is_guild_owner() -> Check[commands.Context[Any]]:
             raise NotGuildOwner
 
     return commands.check(guild_owner)
+
+
+def is_recorder() -> Check[commands.Context[Any]]:
+    """Checks for Manage Server or the configured recorder role."""
+
+    async def recorder(ctx: commands.Context) -> Literal[True]:
+        if ctx.guild is None:
+            raise commands.NoPrivateMessage
+        if ctx.author.guild_permissions.manage_guild:
+            return True
+        row = await ctx.bot.settings.get_voice_settings(ctx.guild.id)
+        role_id = row["recorder_role_id"] if row else None
+        if role_id and ctx.author.get_role(role_id):
+            return True
+        raise NotRecorder
+
+    return commands.check(recorder)

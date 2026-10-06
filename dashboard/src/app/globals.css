@@ -1,0 +1,217 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens — "stainless": warm paper or warm charcoal (the system decides), ink and cream type, a
+ * gruvbox-style syntax palette for meaning (module colours, command syntax, numbers, status), and the
+ * bot's own pastel per server as a rail on cards. No glows, no blur, no shadows.
+ */
+:root {
+  --canvas: #f2eee7;
+  --surface: #faf8f4;
+  --surface-2: #ece7de;
+  --surface-3: #e2dcd1;
+  --border: #d8d1c5;
+  --border-strong: #b8afa1;
+  --fg: #1d1a17;
+  --fg-muted: #5b554d;
+  --fg-faint: #6e665b;
+  /* the syntax palette (gruvbox light, darkened where 11px text needs it) */
+  --red: #9d0006;
+  --green: #66650c;
+  --yellow: #8a5a0c;
+  --blue: #076678;
+  --purple: #8f3f71;
+  --aqua: #386a4b;
+  --orange: #af3a03;
+  --red-soft: rgba(157, 0, 6, 0.11);
+  --green-soft: rgba(102, 101, 12, 0.13);
+  --yellow-soft: rgba(138, 90, 12, 0.13);
+  --blue-soft: rgba(7, 102, 120, 0.12);
+  --purple-soft: rgba(143, 63, 113, 0.12);
+  --aqua-soft: rgba(56, 106, 75, 0.13);
+  --orange-soft: rgba(175, 58, 3, 0.12);
+  /* the primary button is the one place yellow is a fill, so it stays bright */
+  --primary: #d79921;
+  --primary-hover: #c98a1a;
+  --primary-fg: #1d1a17;
+  --radius: 6px;
+  --radius-sm: 4px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas: #1a1816;
+    --surface: #211e1b;
+    --surface-2: #292521;
+    --surface-3: #332e29;
+    --border: #363029;
+    --border-strong: #4d463e;
+    --fg: #efe9df;
+    --fg-muted: #b5ada1;
+    --fg-faint: #8f887c;
+    --red: #fc6f5f;
+    --green: #b8bb26;
+    --yellow: #fabd2f;
+    --blue: #83a598;
+    --purple: #d3869b;
+    --aqua: #8ec07c;
+    --orange: #fe8019;
+    --red-soft: rgba(252, 111, 95, 0.12);
+    --green-soft: rgba(184, 187, 38, 0.13);
+    --yellow-soft: rgba(250, 189, 47, 0.13);
+    --blue-soft: rgba(131, 165, 152, 0.14);
+    --purple-soft: rgba(211, 134, 155, 0.14);
+    --aqua-soft: rgba(142, 192, 124, 0.13);
+    --orange-soft: rgba(254, 128, 25, 0.13);
+    --primary: #fabd2f;
+    --primary-hover: #ffc946;
+    --primary-fg: #1a1816;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-faint: var(--fg-faint);
+  --color-red: var(--red);
+  --color-green: var(--green);
+  --color-yellow: var(--yellow);
+  --color-blue: var(--blue);
+  --color-purple: var(--purple);
+  --color-aqua: var(--aqua);
+  --color-orange: var(--orange);
+  --color-red-soft: var(--red-soft);
+  --color-green-soft: var(--green-soft);
+  --color-yellow-soft: var(--yellow-soft);
+  --color-blue-soft: var(--blue-soft);
+  --color-purple-soft: var(--purple-soft);
+  --color-aqua-soft: var(--aqua-soft);
+  --color-orange-soft: var(--orange-soft);
+  /* semantic aliases: links and focus are blue, status is green / yellow / red */
+  --color-accent: var(--blue);
+  --color-accent-soft: var(--blue-soft);
+  --color-ok: var(--green);
+  --color-ok-soft: var(--green-soft);
+  --color-warn: var(--yellow);
+  --color-warn-soft: var(--yellow-soft);
+  --color-danger: var(--red);
+  --color-danger-soft: var(--red-soft);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-fg: var(--primary-fg);
+  --font-display: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius-card: var(--radius);
+  --radius-control: var(--radius-sm);
+}
+
+html {
+  background: var(--canvas);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-text-size-adjust: 100%;
+  scrollbar-gutter: stable;
+}
+
+body {
+  background: var(--canvas);
+  color: var(--fg);
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+
+h1,
+h2,
+h3,
+.display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+code,
+kbd,
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Focus: always visible, never removed. */
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+::selection {
+  background: var(--yellow-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Shared classes, in the components layer so a utility on the element can still override them. */
+@layer components {
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  /* The bot's pastels are made for Discord's dark theme; on paper a rail needs more weight. */
+  @media (prefers-color-scheme: light) {
+    .rail {
+      filter: saturate(3) brightness(0.7);
+    }
+  }
+
+  /* An eyebrow: the small label above a heading, set like a code comment. */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: var(--fg-faint);
+  }
+
+  .eyebrow::before {
+    content: "// ";
+  }
+}
+
+.select-arrow,
+select.appearance-none {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23857c71' stroke-width='2'><path d='M6 8l4 4 4-4' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+  background-size: 1rem;
+}
+
+.sr-only-focusable:not(:focus):not(:focus-within) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
