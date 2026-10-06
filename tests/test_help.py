@@ -367,12 +367,20 @@ async def test_dashboard_line_only_for_manage_guild_and_only_when_configured(
     import config
 
     monkeypatch.setattr(config, "DASHBOARD_URL", "https://spork.umbleh.dev", raising=False)
+    monkeypatch.setattr(config, "SUPPORT_URL", "", raising=False)
     owner_view = await rig.cog.view_for(await rig.context(OWNER_ID))
     assert texts(owner_view)[-1] == "-# Dashboard: https://spork.umbleh.dev"
     member_view = await rig.cog.view_for(await rig.context(USER_ID))
     assert not any("Dashboard" in text for text in texts(member_view))
     monkeypatch.setattr(config, "DASHBOARD_URL", "", raising=False)
     assert not any("Dashboard" in text for text in texts(await rig.cog.view_for(await rig.context(OWNER_ID))))
+
+    # the support server goes to everyone, on the same footer line as the dashboard when both apply
+    monkeypatch.setattr(config, "SUPPORT_URL", "https://discord.gg/example", raising=False)
+    assert texts(await rig.cog.view_for(await rig.context(USER_ID)))[-1] == "-# Support: https://discord.gg/example"
+    monkeypatch.setattr(config, "DASHBOARD_URL", "https://spork.umbleh.dev", raising=False)
+    both = texts(await rig.cog.view_for(await rig.context(OWNER_ID)))[-1]
+    assert both == "-# Dashboard: https://spork.umbleh.dev • Support: https://discord.gg/example"
 
 
 async def test_only_the_invoker_can_use_the_components(rig: SimpleNamespace) -> None:

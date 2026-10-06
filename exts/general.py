@@ -394,6 +394,7 @@ class General(commands.Cog, description="Server, user, and bot info"):
         """What data I collect, how long it's kept, and how to delete your data"""
         privacy_url = getattr(config, "PRIVACY_URL", "")
         terms_url = getattr(config, "TERMS_URL", "")
+        support_url = getattr(config, "SUPPORT_URL", "")
         items: list[ui.Item] = [
             ui.TextDisplay("# Privacy"),
             ui.Separator(spacing=discord.SeparatorSpacing.large),
@@ -419,7 +420,11 @@ class General(commands.Cog, description="Server, user, and bot info"):
             ),
             ui.TextDisplay(f"[Privacy Policy]({privacy_url}) • [Terms of Service]({terms_url})"),
             ui.Separator(),
-            ui.TextDisplay("-# Something wrong? `report` reaches the owner."),
+            ui.TextDisplay(
+                f"-# Something wrong? `report` reaches the owner, or ask in the [support server]({support_url})."
+                if support_url
+                else "-# Something wrong? `report` reaches the owner."
+            ),
         ]
         await ctx.send(view=SporkLayout(*items))
 
@@ -477,9 +482,21 @@ class General(commands.Cog, description="Server, user, and bot info"):
             ui.TextDisplay(
                 f"### Latencies\nLatency: `{round(self.bot.latency * 1000):,}ms`\nAPI Latency: `{int(api_latency):,}ms`"
             ),
-            ui.Separator(),
-            ui.TextDisplay(f"-# Made in discord.py {discord.__version__}"),
         ]
+        links = [
+            f"[{label}]({url})"
+            for label, url in (
+                ("Support Server", getattr(config, "SUPPORT_URL", "")),
+                ("Dashboard", getattr(config, "DASHBOARD_URL", "")),
+                ("Privacy Policy", getattr(config, "PRIVACY_URL", "")),
+                ("Terms of Service", getattr(config, "TERMS_URL", "")),
+            )
+            if url
+        ]
+        if links:
+            items.append(ui.TextDisplay(f"### Links\n{' • '.join(links)}"))
+        items.append(ui.Separator())
+        items.append(ui.TextDisplay(f"-# Made in discord.py {discord.__version__}"))
         await ctx.send(view=SporkLayout(*items, accent_colour=pastel_color(self.bot.user.id)))
 
 

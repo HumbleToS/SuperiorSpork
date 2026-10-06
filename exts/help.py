@@ -95,11 +95,20 @@ class NavButton(ui.Button["HelpView"]):
 class HelpView(SporkLayout):
     """Landing → category → command detail, edited in place, for one invoker only."""
 
-    def __init__(self, index: HelpIndex, invoker_id: int, *, dashboard: str | None, accent: discord.Colour) -> None:
+    def __init__(
+        self,
+        index: HelpIndex,
+        invoker_id: int,
+        *,
+        dashboard: str | None,
+        accent: discord.Colour,
+        support: str | None = None,
+    ) -> None:
         super().__init__(accent_colour=accent, timeout=VIEW_TIMEOUT)
         self.index = index
         self.invoker_id = invoker_id
         self.dashboard = dashboard
+        self.support = support
         self.category: HelpCategory | None = None
         self.entry: HelpEntry | None = None
         self.landing_page = 0
@@ -155,8 +164,11 @@ class HelpView(SporkLayout):
             items = self._category_items(self.category)
         else:
             items = self._landing_items()
-            if self.dashboard:
-                items.append(ui.TextDisplay(f"-# Dashboard: {self.dashboard}"))
+            links = [f"Dashboard: {self.dashboard}"] if self.dashboard else []
+            if self.support:
+                links.append(f"Support: {self.support}")
+            if links:
+                items.append(ui.TextDisplay(f"-# {' • '.join(links)}"))
         self.replace(*items)
 
     def _landing_items(self) -> list[ui.Item[Any]]:
@@ -379,7 +391,14 @@ class Help(commands.Cog, description="This menu, and how to find any command"):
 
     async def view_for(self, ctx: commands.Context[Any]) -> HelpView:
         index = await self.index_for(ctx)
-        return HelpView(index, ctx.author.id, dashboard=self.dashboard_for(ctx.author), accent=pastel_color(ctx.author.id))
+        support = str(getattr(config, "SUPPORT_URL", "") or "") or None
+        return HelpView(
+            index,
+            ctx.author.id,
+            dashboard=self.dashboard_for(ctx.author),
+            accent=pastel_color(ctx.author.id),
+            support=support,
+        )
 
     @app_commands.command(name="help")
     @app_commands.allowed_installs(guilds=True, users=False)

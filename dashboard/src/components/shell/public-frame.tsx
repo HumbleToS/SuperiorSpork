@@ -2,6 +2,9 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { Logo, SporkMark } from "./logo";
 
+// the support server invite; the bot's `about`, `help`, and `privacy` carry the same link
+export const SUPPORT_URL = "https://discord.gg/Z6xyPKJG2z";
+
 const LINKS = [
   { href: "/commands", label: "Commands", always: true },
   { href: "/privacy", label: "Privacy", always: false },
@@ -26,6 +29,14 @@ export function PublicFrame({ children, signedIn }: { children: ReactNode; signe
                 {link.label}
               </Link>
             ))}
+            <a
+              href={SUPPORT_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hidden rounded-[var(--radius-control)] px-2.5 py-1.5 text-fg-muted hover:bg-surface-2 hover:text-fg sm:inline-block"
+            >
+              Support
+            </a>
             {signedIn ? (
               <Link href="/dashboard" className={CTA}>
                 Dashboard
@@ -49,6 +60,9 @@ export function PublicFrame({ children, signedIn }: { children: ReactNode; signe
             sprok is the dashboard for Superior Spork, a Discord bot by umbleh
           </span>
           <span className="flex gap-4">
+            <a href={SUPPORT_URL} target="_blank" rel="noopener noreferrer" className="hover:text-fg">
+              Support
+            </a>
             <Link href="/privacy" className="hover:text-fg">
               Privacy
             </Link>

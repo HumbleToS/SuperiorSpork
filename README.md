@@ -1,6 +1,8 @@
 # SuperiorSpork
 A discord bot made with discord.py that I like using!
 
+Support server: https://discord.gg/Z6xyPKJG2z
+
 ## Running it
 
 The bot lives in Docker next to its own Postgres (`compose.yaml`: the
